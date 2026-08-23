@@ -92,3 +92,8 @@ variable "github_repo_id" {
   description = "Immutable numeric ID of the GitHub repository (from the OIDC sub claim)"
   type        = string
 }
+
+variable "image_uri" {
+  description = "Full ECR image URI (with tag) for the Lambda function, passed from CI"
+  type        = string
+}
