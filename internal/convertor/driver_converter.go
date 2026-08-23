@@ -27,12 +27,20 @@ func DriverToWithSeasonsResponse(driver models.Driver) response.DriverWithSeason
 
 func DriverToResponse(driver models.Driver) response.DriverResponse {
 	num := driver.PermanentNumber
+	var teamName string
+	var points int
+
+	if len(driver.DriverTeamSeasons) > 0 {
+		teamName = driver.DriverTeamSeasons[0].Team.Name
+		points = driver.DriverTeamSeasons[0].Points
+	}
 
 	return response.DriverResponse{
 		DriverID:        driver.ID,
 		Firstname:       driver.Firstname,
 		Lastname:        driver.Lastname,
-		TeamName:        driver.Team,
+		TeamName:        teamName,
+		Points:          points,
 		PermanentNumber: &num,
 		Birthday:        driver.Birthday.Format("2006-01-02"),
 		Country:         driver.Country,
@@ -40,7 +48,6 @@ func DriverToResponse(driver models.Driver) response.DriverResponse {
 		CreatedAt:       driver.CreatedAt,
 	}
 }
-
 func DriverToRaceResultsResponse(driver models.Driver, results []models.DriverRaceResult, season string) response.DriverRaceResultsResponse {
 	dtoResults := make([]response.RaceResultDTO, len(results))
 	for i, res := range results {

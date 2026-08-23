@@ -127,12 +127,12 @@ func mapDriverToWithSeasonsResponse(d *models.Driver) response.DriverWithSeasons
 	}
 }
 
-func (s *DriverService) GetDriversBySeason(ctx context.Context, season string) ([]response.DriverResponse, error) {
+func (s *DriverService) GetDriversBySeason(ctx context.Context, season string) ([]response.DriverWithSeasonsResponse, error) {
 	cacheKey := fmt.Sprintf("drivers::season:%s", season)
 
 	if s.cacheEnabled && s.redisClient != nil {
 		if cachedData, err := s.redisClient.Get(ctx, cacheKey).Bytes(); err == nil {
-			var cachedResp []response.DriverResponse
+			var cachedResp []response.DriverWithSeasonsResponse
 			if err := json.Unmarshal(cachedData, &cachedResp); err == nil {
 				return cachedResp, nil
 			}
@@ -144,9 +144,9 @@ func (s *DriverService) GetDriversBySeason(ctx context.Context, season string) (
 		return nil, err
 	}
 
-	var res []response.DriverResponse
+	var res []response.DriverWithSeasonsResponse
 	for _, d := range drivers {
-		res = append(res, mapDriverToResponse(&d))
+		res = append(res, mapDriverToWithSeasonsResponse(&d))
 	}
 
 	if s.cacheEnabled && s.redisClient != nil {

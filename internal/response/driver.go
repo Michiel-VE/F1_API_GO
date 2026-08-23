@@ -26,6 +26,7 @@ type DriverResponse struct {
 	Lastname        string     `json:"lastname"`
 	PermanentNumber *int       `json:"permanentNumber,omitempty"`
 	TeamName        string     `json:"teamName"`
+	Points          int        `json:"points"`
 	Birthday        string     `json:"birthday"`
 	Country         string     `json:"country"`
 	CountryCode     string     `json:"countryCode"`
