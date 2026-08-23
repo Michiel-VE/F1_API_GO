@@ -162,10 +162,17 @@ func (s *ScrapedRaceResultService) discoverRaceResults(ctx context.Context, year
 		if m := raceResultUrlPattern.FindStringSubmatch(href); len(m) > 1 {
 			slug = m[1]
 		}
+
+		dateText := strings.TrimSpace(cells.Eq(1).Text())
+		re := regexp.MustCompile(`(\d{2}\s+[A-Za-z]{3})`)
+		if match := re.FindString(dateText); match != "" {
+			dateText = match
+		}
+
 		results = append(results, discoveredRace{
 			name: strings.TrimSpace(cells.Eq(0).Text()),
 			slug: slug,
-			date: strings.TrimSpace(cells.Eq(1).Text()),
+			date: dateText,
 			url:  href,
 		})
 	})
@@ -205,7 +212,13 @@ func matchByName(discovered []discoveredRace, raceName string) (discoveredRace, 
 			continue
 		}
 		slugNormalized := strings.ReplaceAll(d.slug, "-", "")
-		if strings.Contains(target, slugNormalized) {
+
+		slugKey := slugNormalized
+		if slugKey == "greatbritain" {
+			slugKey = "british"
+		}
+
+		if strings.Contains(target, slugNormalized) || strings.Contains(target, slugKey) {
 			return d, true
 		}
 	}
@@ -214,6 +227,9 @@ func matchByName(discovered []discoveredRace, raceName string) (discoveredRace, 
 
 func normalizeRaceName(s string) string {
 	s = strings.ToLower(s)
+	re := regexp.MustCompile(`\b20\d{2}\b`)
+	s = re.ReplaceAllString(s, "")
+
 	replacer := strings.NewReplacer("grand prix", "", "gp", "", "-", "", " ", "", "'", "")
 	return strings.TrimSpace(replacer.Replace(s))
 }
