@@ -15,12 +15,11 @@ import (
 	"f1-api-go/services"
 	"f1-api-go/services/scrapers"
 
+	"github.com/google/uuid"
 	"github.com/redis/go-redis/v9"
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
 )
-
-// Adapters to bridge repository package to scrapers package interfaces without changing repo code
 
 type seasonRepoAdapter struct {
 	repo *repository.SeasonRepository
@@ -45,6 +44,10 @@ type raceRepoAdapter struct {
 	db   *gorm.DB
 }
 
+func (a *raceRepoAdapter) FindAllFinishedRacesMissingResults(ctx context.Context, now time.Time, season string) ([]models.Race, error) {
+	return a.repo.FindAllFinishedRacesMissingResults(now, season)
+}
+
 func (a *raceRepoAdapter) FindFirstFinishedRaceMissingResults(ctx context.Context, now time.Time, season string) (*scrapers.Race, error) {
 	m, err := a.repo.FindFirstFinishedRaceMissingResults(now, season)
 	if err != nil || m == nil {
@@ -61,6 +64,9 @@ func (a *raceRepoAdapter) FindByNameAndRaceStartDateAndRaceEndDate(ctx context.C
 }
 func (a *raceRepoAdapter) UpdatePastScheduledRacesToCompleted(ctx context.Context, now time.Time, season string) error {
 	return a.repo.UpdatePastScheduledRacesToCompleted(now, season)
+}
+func (a *raceRepoAdapter) UpdateExternalResultURL(raceID uuid.UUID, url string) error {
+	return nil
 }
 func (a *raceRepoAdapter) Save(ctx context.Context, r *scrapers.Race) (*scrapers.Race, error) {
 	m := &models.Race{
@@ -262,6 +268,49 @@ func (tm *txManagerAdapter) WithTx(ctx context.Context, fn func(ctx context.Cont
 func main() {
 	config.InitConfig()
 
+	runMode := os.Getenv("RUN_MODE")
+	if runMode != "" {
+		dsn := config.AppCfg.DatabaseURL
+		db, err := gorm.Open(postgres.New(postgres.Config{
+			DSN:                  dsn,
+			PreferSimpleProtocol: true,
+		}), &gorm.Config{
+			PrepareStmt: false,
+		})
+		if err != nil {
+			log.Fatalf("Failed to connect to database: %v", err)
+		}
+
+		if os.Getenv("AWS_EXECUTION_ENV") != "" {
+			http.HandleFunc("/events", func(w http.ResponseWriter, r *http.Request) {
+				log.Printf("Executing scraper task for RUN_MODE: %s", runMode)
+				if err := executeRunMode(r.Context(), db, runMode); err != nil {
+					log.Printf("Scraper failed: %v", err)
+					http.Error(w, err.Error(), http.StatusInternalServerError)
+					return
+				}
+				w.WriteHeader(http.StatusOK)
+				w.Write([]byte("OK"))
+			})
+
+			port := os.Getenv("PORT")
+			if port == "" {
+				port = "8080"
+			}
+			log.Printf("Scraper container listening for Lambda Web Adapter events on port %s", port)
+			if err := http.ListenAndServe(":"+port, nil); err != nil {
+				log.Fatalf("Scraper HTTP server failed: %v", err)
+			}
+			return
+		}
+
+		ctx := context.Background()
+		if err := executeRunMode(ctx, db, runMode); err != nil {
+			log.Fatalf("Failed execution: %v", err)
+		}
+		return
+	}
+
 	dsn := config.AppCfg.DatabaseURL
 	db, err := gorm.Open(postgres.New(postgres.Config{
 		DSN:                  dsn,
@@ -273,175 +322,6 @@ func main() {
 		log.Fatalf("Failed to connect to database: %v", err)
 	}
 
-	runMode := os.Getenv("RUN_MODE")
-	if runMode != "" {
-		if os.Getenv("AWS_EXECUTION_ENV") != "" {
-			http.HandleFunc("/events", func(w http.ResponseWriter, r *http.Request) {
-				ctx := r.Context()
-				currentYear := fmt.Sprintf("%d", time.Now().Year())
-				txMgr := &txManagerAdapter{db: db}
-
-				log.Printf("Executing scraper task via Web Adapter for RUN_MODE: %s", runMode)
-				var taskErr error
-
-				switch runMode {
-				case "scraper-race":
-					rRepo := repository.NewRaceRepository(db)
-					sRepo := repository.NewSeasonRepository(db)
-					stRepo := repository.NewRaceStatusRepository(db)
-					rsRepo := repository.NewRaceSeasonRepository(db)
-
-					raceScraper := scrapers.NewScrapedRaceService(
-						"",
-						&seasonRepoAdapter{repo: sRepo, db: db},
-						&raceRepoAdapter{repo: rRepo, db: db},
-						&raceStatusAdapter{repo: stRepo},
-						&raceSeasonAdapter{repo: rsRepo, db: db},
-						txMgr,
-						nil,
-					)
-					taskErr = raceScraper.UpdateRaceFromScraperForSeason(ctx, currentYear)
-
-				case "scraper-driver-team":
-					tRepo := repository.NewTeamRepository(db)
-					teamScraper := scrapers.NewScrapedTeamService(&teamRepoAdapter{repo: tRepo, db: db}, nil)
-					taskErr = teamScraper.UpdateTeamsFromScraper(ctx)
-
-				case "scraper-standing":
-					dRepo := repository.NewDriverRepository(db)
-					sRepo := repository.NewSeasonRepository(db)
-					tRepo := repository.NewTeamRepository(db)
-					dtsRepo := repository.NewDriverTeamSeasonRepository(db)
-
-					standingScraper := scrapers.NewScrapedStandingService(
-						&driverRepoAdapter{repo: dRepo, db: db},
-						&seasonRepoAdapter{repo: sRepo, db: db},
-						&teamRepoAdapter{repo: tRepo, db: db, season: currentYear},
-						&dtsRepoAdapter{repo: dtsRepo, db: db},
-						txMgr,
-						nil,
-					)
-					taskErr = standingScraper.UpdateDriverAndPointsFromScraperForSeason(ctx, currentYear)
-
-				case "scraper-race-result":
-					dRepo := repository.NewDriverRepository(db)
-					rRepo := repository.NewRaceRepository(db)
-					sRepo := repository.NewSeasonRepository(db)
-					resRepo := repository.NewDriverRaceResultRepository(db)
-
-					resultScraper := scrapers.NewScrapedRaceResultService(
-						"",
-						&driverRepoAdapter{repo: dRepo, db: db},
-						&raceRepoAdapter{repo: rRepo, db: db},
-						&seasonRepoAdapter{repo: sRepo, db: db},
-						&resultRepoAdapter{repo: resRepo, db: db},
-						txMgr,
-						nil,
-					)
-					taskErr = resultScraper.UpdatePendingRaceResults(ctx, currentYear)
-
-				default:
-					taskErr = fmt.Errorf("unknown RUN_MODE: %s", runMode)
-				}
-
-				if taskErr != nil {
-					log.Printf("Scraper task failed: %v", taskErr)
-					http.Error(w, taskErr.Error(), http.StatusInternalServerError)
-					return
-				}
-				w.WriteHeader(http.StatusOK)
-				w.Write([]byte("OK"))
-			})
-
-			port := os.Getenv("PORT")
-			if port == "" {
-				port = "8080"
-			}
-			log.Printf("Starting Lambda Web Adapter listener on port %s for RUN_MODE: %s", port, runMode)
-			if err := http.ListenAndServe(":"+port, nil); err != nil {
-				log.Fatalf("Server failed: %v", err)
-			}
-			return
-		}
-
-		// Local CLI mode execution
-		ctx := context.Background()
-		currentYear := fmt.Sprintf("%d", time.Now().Year())
-		txMgr := &txManagerAdapter{db: db}
-
-		switch runMode {
-		case "scraper-race":
-			rRepo := repository.NewRaceRepository(db)
-			sRepo := repository.NewSeasonRepository(db)
-			stRepo := repository.NewRaceStatusRepository(db)
-			rsRepo := repository.NewRaceSeasonRepository(db)
-
-			raceScraper := scrapers.NewScrapedRaceService(
-				"",
-				&seasonRepoAdapter{repo: sRepo, db: db},
-				&raceRepoAdapter{repo: rRepo, db: db},
-				&raceStatusAdapter{repo: stRepo},
-				&raceSeasonAdapter{repo: rsRepo, db: db},
-				txMgr,
-				nil,
-			)
-			if err := raceScraper.UpdateRaceFromScraperForSeason(ctx, currentYear); err != nil {
-				log.Fatalf("Failed to update races: %v", err)
-			}
-
-		case "scraper-driver-team":
-			tRepo := repository.NewTeamRepository(db)
-			teamScraper := scrapers.NewScrapedTeamService(&teamRepoAdapter{repo: tRepo, db: db}, nil)
-			if err := teamScraper.UpdateTeamsFromScraper(ctx); err != nil {
-				log.Fatalf("Failed to update teams: %v", err)
-			}
-
-		case "scraper-standing":
-			dRepo := repository.NewDriverRepository(db)
-			sRepo := repository.NewSeasonRepository(db)
-			tRepo := repository.NewTeamRepository(db)
-			dtsRepo := repository.NewDriverTeamSeasonRepository(db)
-
-			standingScraper := scrapers.NewScrapedStandingService(
-				&driverRepoAdapter{repo: dRepo, db: db},
-				&seasonRepoAdapter{repo: sRepo, db: db},
-				&teamRepoAdapter{repo: tRepo, db: db, season: currentYear},
-				&dtsRepoAdapter{repo: dtsRepo, db: db},
-				txMgr,
-				nil,
-			)
-			if err := standingScraper.UpdateDriverAndPointsFromScraperForSeason(ctx, currentYear); err != nil {
-				log.Fatalf("Failed to update standings: %v", err)
-			}
-
-		case "scraper-race-result":
-			dRepo := repository.NewDriverRepository(db)
-			rRepo := repository.NewRaceRepository(db)
-			sRepo := repository.NewSeasonRepository(db)
-			resRepo := repository.NewDriverRaceResultRepository(db)
-
-			resultScraper := scrapers.NewScrapedRaceResultService(
-				"",
-				&driverRepoAdapter{repo: dRepo, db: db},
-				&raceRepoAdapter{repo: rRepo, db: db},
-				&seasonRepoAdapter{repo: sRepo, db: db},
-				&resultRepoAdapter{repo: resRepo, db: db},
-				txMgr,
-				nil,
-			)
-			if err := resultScraper.UpdatePendingRaceResults(ctx, currentYear); err != nil {
-				log.Fatalf("Failed to update race results: %v", err)
-			}
-
-		default:
-			log.Fatalf("Unknown RUN_MODE: %s", runMode)
-		}
-
-		log.Println("Scraper execution completed successfully.")
-		return
-	}
-
-	// Normal API Server Mode initialization...
 	var redisClient *redis.Client
 	if config.AppCfg.RedisURL != "" {
 		opt, err := redis.ParseURL(config.AppCfg.RedisURL)
@@ -456,9 +336,6 @@ func main() {
 	raceRepoService := repository.NewRaceRepository(db)
 	userRepo := repository.NewUserRepository(db)
 	driverTeamSeasonRepo := repository.NewDriverTeamSeasonRepository(db)
-
-	driverRaceResultRepo := repository.NewDriverRaceResultRepository(db)
-	driverRaceResultsService := services.NewDriverRaceResultsService(driverRepoService, driverRaceResultRepo)
 
 	poolRepo := repository.NewPoolRepository(db)
 	teamPredictionRepo := repository.NewTeamPredictionRepository(db)
@@ -485,7 +362,7 @@ func main() {
 
 	authController := controller.NewAuthController(authService, jwtService)
 	profileController := controller.NewProfileController(userService)
-	driverController := controller.NewDriverController(driverService, driverRaceResultsService)
+	driverController := controller.NewDriverController(driverService, nil)
 	teamController := controller.NewTeamController(teamService)
 	raceController := controller.NewRaceController(raceService)
 	predictionController := controller.NewPredictionController(predictionService)
@@ -512,5 +389,70 @@ func main() {
 	fmt.Printf("Server running on http://localhost%s\n", serverAddr)
 	if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 		log.Fatalf("Server failed to start: %v", err)
+	}
+}
+
+func executeRunMode(ctx context.Context, db *gorm.DB, runMode string) error {
+	currentYear := fmt.Sprintf("%d", time.Now().Year())
+	txMgr := &txManagerAdapter{db: db}
+
+	switch runMode {
+	case "scraper-race":
+		rRepo := repository.NewRaceRepository(db)
+		sRepo := repository.NewSeasonRepository(db)
+		stRepo := repository.NewRaceStatusRepository(db)
+		rsRepo := repository.NewRaceSeasonRepository(db)
+
+		raceScraper := scrapers.NewScrapedRaceService(
+			"",
+			&seasonRepoAdapter{repo: sRepo, db: db},
+			&raceRepoAdapter{repo: rRepo, db: db},
+			&raceStatusAdapter{repo: stRepo},
+			&raceSeasonAdapter{repo: rsRepo, db: db},
+			txMgr,
+			nil,
+		)
+		return raceScraper.UpdateRaceFromScraperForSeason(ctx, currentYear)
+
+	case "scraper-driver-team":
+		tRepo := repository.NewTeamRepository(db)
+		teamScraper := scrapers.NewScrapedTeamService(&teamRepoAdapter{repo: tRepo, db: db, season: currentYear}, nil)
+		return teamScraper.UpdateTeamsFromScraper(ctx)
+
+	case "scraper-standing":
+		dRepo := repository.NewDriverRepository(db)
+		sRepo := repository.NewSeasonRepository(db)
+		tRepo := repository.NewTeamRepository(db)
+		dtsRepo := repository.NewDriverTeamSeasonRepository(db)
+
+		standingScraper := scrapers.NewScrapedStandingService(
+			&driverRepoAdapter{repo: dRepo, db: db},
+			&seasonRepoAdapter{repo: sRepo, db: db},
+			&teamRepoAdapter{repo: tRepo, db: db, season: currentYear},
+			&dtsRepoAdapter{repo: dtsRepo, db: db},
+			txMgr,
+			nil,
+		)
+		return standingScraper.UpdateDriverAndPointsFromScraperForSeason(ctx, currentYear)
+
+	case "scraper-race-result":
+		dRepo := repository.NewDriverRepository(db)
+		rRepo := repository.NewRaceRepository(db)
+		sRepo := repository.NewSeasonRepository(db)
+		resRepo := repository.NewDriverRaceResultRepository(db)
+
+		resultScraper := scrapers.NewScrapedRaceResultService(
+			"",
+			&driverRepoAdapter{repo: dRepo, db: db},
+			&raceRepoAdapter{repo: rRepo, db: db},
+			&seasonRepoAdapter{repo: sRepo, db: db},
+			&resultRepoAdapter{repo: resRepo, db: db},
+			txMgr,
+			nil,
+		)
+		return resultScraper.UpdatePendingRaceResults(ctx, currentYear)
+
+	default:
+		return fmt.Errorf("unknown RUN_MODE: %s", runMode)
 	}
 }
