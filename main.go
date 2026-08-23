@@ -336,6 +336,7 @@ func main() {
 	raceRepoService := repository.NewRaceRepository(db)
 	userRepo := repository.NewUserRepository(db)
 	driverTeamSeasonRepo := repository.NewDriverTeamSeasonRepository(db)
+	driverRaceResultRepo := repository.NewDriverRaceResultRepository(db)
 
 	poolRepo := repository.NewPoolRepository(db)
 	teamPredictionRepo := repository.NewTeamPredictionRepository(db)
@@ -343,6 +344,7 @@ func main() {
 	txManager := repository.NewTransactionManager(db)
 
 	driverService := services.NewDriverService(driverRepoService, redisClient, config.AppCfg.CacheEnabled)
+	driverRaceResultsService := services.NewDriverRaceResultsService(driverRepoService, driverRaceResultRepo)
 	teamService := services.NewTeamService(teamRepoService, driverTeamSeasonRepo, redisClient, config.AppCfg.CacheEnabled)
 	raceService := services.NewRaceService(raceRepoService, redisClient, config.AppCfg.CacheEnabled)
 	userService := services.NewUserService(userRepo)
@@ -362,7 +364,7 @@ func main() {
 
 	authController := controller.NewAuthController(authService, jwtService)
 	profileController := controller.NewProfileController(userService)
-	driverController := controller.NewDriverController(driverService, nil)
+	driverController := controller.NewDriverController(driverService, driverRaceResultsService)
 	teamController := controller.NewTeamController(teamService)
 	raceController := controller.NewRaceController(raceService)
 	predictionController := controller.NewPredictionController(predictionService)
