@@ -36,12 +36,36 @@ func (s *DriverRaceResultsService) GetDriverRaceResults(ctx context.Context, dri
 		return nil, fmt.Errorf("failed to get race results: %w", err)
 	}
 
-	_ = results
+	var raceResultDTOs []response.RaceResultDTO
+	for _, res := range results {
+		raceName := ""
+		if res.Race.Name != "" {
+			raceName = res.Race.Name
+		}
+
+		status := ""
+		if res.Status != nil {
+			status = *res.Status
+		}
+
+		var lapsPtr *int
+		if res.LapsCompleted != nil {
+			lapsVal := *res.LapsCompleted
+			lapsPtr = &lapsVal
+		}
+
+		raceResultDTOs = append(raceResultDTOs, response.RaceResultDTO{
+			RaceName:      raceName,
+			Points:        res.Points,
+			LapsCompleted: lapsPtr,
+			Status:        status,
+		})
+	}
 
 	return &response.DriverRaceResultsResponse{
 		Firstname: driver.Firstname,
 		Lastname:  driver.Lastname,
 		Season:    seasonName,
-		Results:   []response.RaceResultDTO{},
+		Results:   raceResultDTOs,
 	}, nil
 }

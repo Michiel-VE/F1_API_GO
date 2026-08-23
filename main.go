@@ -59,6 +59,9 @@ func (a *raceRepoAdapter) FindByNameAndRaceStartDateAndRaceEndDate(ctx context.C
 	}
 	return &scrapers.Race{ID: m.ID, Name: m.Name, Country: m.Country, RaceStartDate: m.RaceStartDate, RaceEndDate: m.RaceEndDate}, nil
 }
+func (a *raceRepoAdapter) UpdatePastScheduledRacesToCompleted(ctx context.Context, now time.Time, season string) error {
+	return a.repo.UpdatePastScheduledRacesToCompleted(now, season)
+}
 func (a *raceRepoAdapter) Save(ctx context.Context, r *scrapers.Race) (*scrapers.Race, error) {
 	m := &models.Race{
 		ID:            r.ID,
@@ -454,6 +457,9 @@ func main() {
 	userRepo := repository.NewUserRepository(db)
 	driverTeamSeasonRepo := repository.NewDriverTeamSeasonRepository(db)
 
+	driverRaceResultRepo := repository.NewDriverRaceResultRepository(db)
+	driverRaceResultsService := services.NewDriverRaceResultsService(driverRepoService, driverRaceResultRepo)
+
 	poolRepo := repository.NewPoolRepository(db)
 	teamPredictionRepo := repository.NewTeamPredictionRepository(db)
 	predictionTeamRepo := repository.NewPredictionTeamRepository(db)
@@ -479,7 +485,7 @@ func main() {
 
 	authController := controller.NewAuthController(authService, jwtService)
 	profileController := controller.NewProfileController(userService)
-	driverController := controller.NewDriverController(driverService, nil)
+	driverController := controller.NewDriverController(driverService, driverRaceResultsService)
 	teamController := controller.NewTeamController(teamService)
 	raceController := controller.NewRaceController(raceService)
 	predictionController := controller.NewPredictionController(predictionService)

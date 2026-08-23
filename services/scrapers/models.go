@@ -95,6 +95,7 @@ type DriverRaceResultRepository interface {
 type RaceRepository interface {
 	FindFirstFinishedRaceMissingResults(ctx context.Context, now time.Time, seasonName string) (*Race, error)
 	FindByNameAndRaceStartDateAndRaceEndDate(ctx context.Context, name string, start, end time.Time) (*Race, error)
+	UpdatePastScheduledRacesToCompleted(ctx context.Context, now time.Time, seasonName string) error
 	Save(ctx context.Context, race *Race) (*Race, error)
 }
 

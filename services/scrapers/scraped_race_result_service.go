@@ -57,6 +57,11 @@ func NewScrapedRaceResultService(
 func (s *ScrapedRaceResultService) UpdatePendingRaceResults(ctx context.Context, year string) error {
 	s.logger.Info("Syncing completed race results up to current date.", slog.String("year", year))
 
+	// Automatically update past-due scheduled races to COMPLETED before looking for missing results
+	if err := s.raceRepository.UpdatePastScheduledRacesToCompleted(ctx, time.Now(), year); err != nil {
+		s.logger.Error("Failed to update past scheduled races to completed", slog.String("error", err.Error()))
+	}
+
 	targetRace, err := s.raceRepository.FindFirstFinishedRaceMissingResults(ctx, time.Now(), year)
 	if err != nil || targetRace == nil {
 		s.logger.Info("All finished races already have results recorded.", slog.String("year", year))

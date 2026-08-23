@@ -122,12 +122,13 @@ func SecurityConfig(
 	public := r.Group("/api/v1")
 	{
 		// Driver Routes
+		// Driver Routes
 		public.GET("/drivers", driverController.GetAllDrivers)
 		public.GET("/driver", driverController.GetDriverByPermanentNumber)
 		public.GET("/drivers/lastname/:lastName", driverController.GetDriverByLastName)
 		public.GET("/drivers/name/:name/career-history", driverController.GetDriverCareerHistory)
-		public.GET("/drivers/:id/results", driverController.GetDriverRaceResults)
 		public.GET("/drivers/season/:season", driverController.GetDriversBySeason)
+		public.GET("/drivers/:id/race-results", driverController.GetDriverRaceResults)
 
 		// Team Routes
 		public.GET("/teams/:season", teamController.GetAllTeamsForSeason)

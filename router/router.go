@@ -37,8 +37,8 @@ func SetupRouter(
 		api.GET("/driver", driverController.GetDriverByPermanentNumber)
 		api.GET("/drivers/lastname/:lastName", driverController.GetDriverByLastName)
 		api.GET("/drivers/name/:name/career-history", driverController.GetDriverCareerHistory)
-		api.GET("/drivers/:id/results", driverController.GetDriverRaceResults)
-		api.GET("/drivers/season/:season", driverController.GetDriversBySeason)
+		api.GET("/drivers/season/:season", driverController.GetDriversBySeason) // Moved up!
+		api.GET("/drivers/:id/race-results", driverController.GetDriverRaceResults)
 
 		// Team Routes
 		api.GET("/teams/:season", teamController.GetAllTeamsForSeason)

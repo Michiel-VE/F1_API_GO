@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"f1-api-go/internal/models"
+
 	"gorm.io/gorm"
 )
 
@@ -70,4 +71,22 @@ func (r *RaceRepository) FindFirstFinishedRaceMissingResults(now time.Time, year
 		return nil, nil
 	}
 	return &race, err
+}
+
+func (r *RaceRepository) UpdatePastScheduledRacesToCompleted(now time.Time, year string) error {
+	query := `
+		UPDATE f1_api.race
+		SET status_id = (SELECT id FROM f1_api.race_status WHERE name = 'COMPLETED'),
+		    updated_at = NOW()
+		WHERE id IN (
+			SELECT r.id FROM f1_api.race r
+			JOIN f1_api.race_status rs ON r.status_id = rs.id
+			JOIN f1_api.race_season rsj ON r.id = rsj.race_id
+			JOIN f1_api.season s ON rsj.season_id = s.id
+			WHERE s.season_name = ?
+			AND r.race_end_date < ?
+			AND rs.name = 'SCHEDULED'
+		)`
+
+	return r.db.Exec(query, year, now).Error
 }
