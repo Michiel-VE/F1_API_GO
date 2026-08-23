@@ -10,16 +10,17 @@ import (
 )
 
 type Race struct {
-	ID            uuid.UUID
-	Name          string
-	Country       string
-	StartDate     time.Time
-	EndDate       time.Time
-	RaceStartDate time.Time
-	RaceEndDate   time.Time
-	Status        *RaceStatus
-	CreatedAt     time.Time
-	UpdatedAt     time.Time
+	ID                uuid.UUID
+	Name              string
+	Country           string
+	StartDate         time.Time
+	EndDate           time.Time
+	RaceStartDate     time.Time
+	RaceEndDate       time.Time
+	Status            *RaceStatus
+	CreatedAt         time.Time
+	UpdatedAt         time.Time
+	ExternalResultURL *string
 }
 
 type Season struct {
@@ -94,8 +95,10 @@ type DriverRaceResultRepository interface {
 
 type RaceRepository interface {
 	FindFirstFinishedRaceMissingResults(ctx context.Context, now time.Time, seasonName string) (*Race, error)
+	FindAllFinishedRacesMissingResults(ctx context.Context, now time.Time, seasonName string) ([]models.Race, error)
 	FindByNameAndRaceStartDateAndRaceEndDate(ctx context.Context, name string, start, end time.Time) (*Race, error)
 	UpdatePastScheduledRacesToCompleted(ctx context.Context, now time.Time, seasonName string) error
+	UpdateExternalResultURL(raceID uuid.UUID, url string) error
 	Save(ctx context.Context, race *Race) (*Race, error)
 }
 

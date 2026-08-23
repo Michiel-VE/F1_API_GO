@@ -77,7 +77,7 @@ func (r *RaceRepository) UpdatePastScheduledRacesToCompleted(now time.Time, year
 	query := `
 		UPDATE f1_api.race
 		SET status_id = (SELECT id FROM f1_api.race_status WHERE name = 'COMPLETED'),
-		    updated_at = NOW()
+			updated_at = NOW()
 		WHERE id IN (
 			SELECT r.id FROM f1_api.race r
 			JOIN f1_api.race_status rs ON r.status_id = rs.id
@@ -89,4 +89,25 @@ func (r *RaceRepository) UpdatePastScheduledRacesToCompleted(now time.Time, year
 		)`
 
 	return r.db.Exec(query, year, now).Error
+}
+
+func (r *RaceRepository) FindAllFinishedRacesMissingResults(now time.Time, year string) ([]models.Race, error) {
+	query := `
+		SELECT r.* FROM f1_api.race r
+		JOIN f1_api.race_status rs ON r.status_id = rs.id
+		JOIN f1_api.race_season rsj ON r.id = rsj.race_id
+		JOIN f1_api.season s ON rsj.season_id = s.id
+		WHERE s.season_name = ?
+		AND r.race_end_date < ?
+		AND rs.name = 'COMPLETED'
+		AND r.name NOT ILIKE '%TESTING%'
+		AND r.name NOT ILIKE '%PRE-SEASON%'
+		AND NOT EXISTS (
+			SELECT 1 FROM f1_api.driver_race_result drr
+			WHERE drr.race_id = r.id
+		)
+		ORDER BY r.race_end_date ASC`
+	var races []models.Race
+	err := r.db.Raw(query, year, now).Find(&races).Error
+	return races, err
 }
