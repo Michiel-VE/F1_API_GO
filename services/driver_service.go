@@ -2,6 +2,7 @@ package services
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"time"
 
@@ -10,15 +11,24 @@ import (
 	"f1-api-go/repository"
 
 	"github.com/google/uuid"
+	"github.com/redis/go-redis/v9"
 )
 
 type DriverService struct {
 	driverRepository *repository.DriverRepository
+	redisClient      *redis.Client
+	cacheEnabled     bool
 }
 
-func NewDriverService(driverRepo *repository.DriverRepository) *DriverService {
+func NewDriverService(
+	driverRepo *repository.DriverRepository,
+	redisClient *redis.Client,
+	cacheEnabled bool,
+) *DriverService {
 	return &DriverService{
 		driverRepository: driverRepo,
+		redisClient:      redisClient,
+		cacheEnabled:     cacheEnabled,
 	}
 }
 
@@ -118,6 +128,17 @@ func mapDriverToWithSeasonsResponse(d *models.Driver) response.DriverWithSeasons
 }
 
 func (s *DriverService) GetDriversBySeason(ctx context.Context, season string) ([]response.DriverResponse, error) {
+	cacheKey := fmt.Sprintf("drivers::season:%s", season)
+
+	if s.cacheEnabled && s.redisClient != nil {
+		if cachedData, err := s.redisClient.Get(ctx, cacheKey).Bytes(); err == nil {
+			var cachedResp []response.DriverResponse
+			if err := json.Unmarshal(cachedData, &cachedResp); err == nil {
+				return cachedResp, nil
+			}
+		}
+	}
+
 	drivers, err := s.driverRepository.FindAllBySeasonName(season)
 	if err != nil {
 		return nil, err
@@ -127,6 +148,13 @@ func (s *DriverService) GetDriversBySeason(ctx context.Context, season string) (
 	for _, d := range drivers {
 		res = append(res, mapDriverToResponse(&d))
 	}
+
+	if s.cacheEnabled && s.redisClient != nil {
+		if bytes, err := json.Marshal(res); err == nil {
+			s.redisClient.Set(ctx, cacheKey, bytes, 0)
+		}
+	}
+
 	return res, nil
 }
 
@@ -144,6 +172,17 @@ func (s *DriverService) GetDriversByPermanentNumber(ctx context.Context, permNum
 }
 
 func (s *DriverService) GetAllDrivers(ctx context.Context) ([]response.DriverResponse, error) {
+	cacheKey := "drivers::all"
+
+	if s.cacheEnabled && s.redisClient != nil {
+		if cachedData, err := s.redisClient.Get(ctx, cacheKey).Bytes(); err == nil {
+			var cachedResp []response.DriverResponse
+			if err := json.Unmarshal(cachedData, &cachedResp); err == nil {
+				return cachedResp, nil
+			}
+		}
+	}
+
 	drivers, err := s.driverRepository.FindAll()
 	if err != nil {
 		return nil, err
@@ -153,5 +192,12 @@ func (s *DriverService) GetAllDrivers(ctx context.Context) ([]response.DriverRes
 	for _, d := range drivers {
 		res = append(res, mapDriverToResponse(&d))
 	}
+
+	if s.cacheEnabled && s.redisClient != nil {
+		if bytes, err := json.Marshal(res); err == nil {
+			s.redisClient.Set(ctx, cacheKey, bytes, 0)
+		}
+	}
+
 	return res, nil
 }

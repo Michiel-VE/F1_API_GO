@@ -16,23 +16,25 @@ import (
 type RaceService struct {
 	raceRepository *repository.RaceRepository
 	redisClient    *redis.Client
+	cacheEnabled   bool
 }
 
 func NewRaceService(
 	rRepo *repository.RaceRepository,
 	redisClient *redis.Client,
+	cacheEnabled bool,
 ) *RaceService {
 	return &RaceService{
 		raceRepository: rRepo,
 		redisClient:    redisClient,
+		cacheEnabled:   cacheEnabled,
 	}
 }
 
 func (s *RaceService) GetAllRacesForSeason(ctx context.Context, season string) ([]response.RaceResponse, error) {
 	cacheKey := fmt.Sprintf("races::season:%s", season)
 
-	// Only attempt cache lookup if redisClient is initialized
-	if s.redisClient != nil {
+	if s.cacheEnabled && s.redisClient != nil {
 		if cachedData, err := s.redisClient.Get(ctx, cacheKey).Bytes(); err == nil {
 			var cachedResp []response.RaceResponse
 			if err := json.Unmarshal(cachedData, &cachedResp); err == nil {
@@ -48,8 +50,7 @@ func (s *RaceService) GetAllRacesForSeason(ctx context.Context, season string) (
 
 	result := s.convertList(races)
 
-	// Only attempt to save to cache if redisClient is initialized
-	if s.redisClient != nil {
+	if s.cacheEnabled && s.redisClient != nil {
 		if bytes, err := json.Marshal(result); err == nil {
 			s.redisClient.Set(ctx, cacheKey, bytes, 0)
 		}

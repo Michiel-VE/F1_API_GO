@@ -1,6 +1,10 @@
 package dto
 
-import "github.com/google/uuid"
+import (
+	"time"
+
+	"github.com/google/uuid"
+)
 
 type TeamWithPoints interface {
 	GetID() uuid.UUID
@@ -17,6 +21,7 @@ type TeamWithPointsDTO struct {
 	ShortName   string    `json:"short_name"`
 	Country     string    `json:"country"`
 	Base        string    `json:"base"`
+	CreatedAt   time.Time `json:"created_at"`
 	TotalPoints int       `json:"total_points"`
 }
 

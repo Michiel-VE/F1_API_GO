@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -40,6 +41,7 @@ type AppConfig struct {
 	DatabaseTimeout     time.Duration
 	RedisCacheTTL       time.Duration
 	RedisCacheNulls     bool
+	CacheEnabled        bool
 }
 
 var (
@@ -73,6 +75,21 @@ func buildGoogleOAuth(clientID, clientSecret string) *oauth2.Config {
 		Scopes:       []string{"openid", "profile", "email"},
 		Endpoint:     google.Endpoint,
 	}
+}
+
+// cacheEnabledForLocal defaults to false for local dev so responses always
+// reflect the latest code/DB state without manual cache flushing. Set
+// CACHE_ENABLED=true in local.env to opt back into caching locally.
+func cacheEnabledForLocal() bool {
+	val := os.Getenv("CACHE_ENABLED")
+	if val == "" {
+		return false
+	}
+	enabled, err := strconv.ParseBool(val)
+	if err != nil {
+		return false
+	}
+	return enabled
 }
 
 func loadLocalEnv() {
@@ -131,6 +148,7 @@ func loadLocalEnv() {
 		DatabaseTimeout:     15 * time.Second,
 		RedisCacheTTL:       3600 * time.Second,
 		RedisCacheNulls:     false,
+		CacheEnabled:        cacheEnabledForLocal(),
 	}
 }
 
@@ -203,6 +221,7 @@ func loadSecretsManager() {
 		DatabaseTimeout:     15 * time.Second,
 		RedisCacheTTL:       3600 * time.Second,
 		RedisCacheNulls:     false,
+		CacheEnabled:        true,
 	}
 
 	log.Printf("All secrets loaded from AWS Secret (%s) successfully.\n", appSecretName)

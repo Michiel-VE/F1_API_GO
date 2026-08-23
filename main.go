@@ -48,6 +48,7 @@ func main() {
 	teamRepo := repository.NewTeamRepository(db)
 	raceRepo := repository.NewRaceRepository(db)
 	userRepo := repository.NewUserRepository(db)
+	driverTeamSeasonRepo := repository.NewDriverTeamSeasonRepository(db)
 
 	poolRepo := repository.NewPoolRepository(db)
 	teamPredictionRepo := repository.NewTeamPredictionRepository(db)
@@ -55,9 +56,9 @@ func main() {
 	txManager := repository.NewTransactionManager(db)
 
 	// 5. Initialize services
-	driverService := services.NewDriverService(driverRepo)
-	teamService := services.NewTeamService(teamRepo, redisClient)
-	raceService := services.NewRaceService(raceRepo, redisClient)
+	driverService := services.NewDriverService(driverRepo, redisClient, config.AppCfg.CacheEnabled)
+	teamService := services.NewTeamService(teamRepo, driverTeamSeasonRepo, redisClient, config.AppCfg.CacheEnabled)
+	raceService := services.NewRaceService(raceRepo, redisClient, config.AppCfg.CacheEnabled)
 	userService := services.NewUserService(userRepo)
 	predictionService := services.NewPredictionService(
 		poolRepo,
