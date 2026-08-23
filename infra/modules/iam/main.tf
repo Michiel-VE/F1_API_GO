@@ -137,6 +137,27 @@ resource "aws_iam_policy" "github_deploy_policy" {
           "secretsmanager:*"
         ],
         Resource = "*"
+      },
+      {
+        Effect = "Allow",
+        Action = [
+          "s3:GetObject",
+          "s3:PutObject",
+          "s3:ListBucket"
+        ],
+        Resource = [
+          "arn:aws:s3:::f1-api-tfstate",
+          "arn:aws:s3:::f1-api-tfstate/*"
+        ]
+      },
+      {
+        Effect = "Allow",
+        Action = [
+          "dynamodb:GetItem",
+          "dynamodb:PutItem",
+          "dynamodb:DeleteItem"
+        ],
+        Resource = "arn:aws:dynamodb:eu-north-1:${var.aws_account_id}:table/f1-api-tf-lock"
       }
     ]
   })
