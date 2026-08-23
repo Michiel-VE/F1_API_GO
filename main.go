@@ -112,12 +112,13 @@ func (a *raceSeasonAdapter) Save(ctx context.Context, rs *scrapers.RaceSeason) e
 }
 
 type teamRepoAdapter struct {
-	repo *repository.TeamRepository
-	db   *gorm.DB
+	repo   *repository.TeamRepository
+	db     *gorm.DB
+	season string
 }
 
 func (a *teamRepoAdapter) FindAll(ctx context.Context) ([]*scrapers.Team, error) {
-	teams, err := a.repo.FindAllTeamsBySeasonName("")
+	teams, err := a.repo.FindAllTeamsBySeasonName(a.season)
 	if err != nil {
 		return nil, err
 	}
@@ -292,7 +293,7 @@ func main() {
 					standingScraper := scrapers.NewScrapedStandingService(
 						&driverRepoAdapter{repo: dRepo, db: db},
 						&seasonRepoAdapter{repo: sRepo, db: db},
-						&teamRepoAdapter{repo: tRepo, db: db},
+						&teamRepoAdapter{repo: tRepo, db: db, season: currentYear},
 						&dtsRepoAdapter{repo: dtsRepo, db: db},
 						txMgr,
 						nil,
@@ -381,7 +382,7 @@ func main() {
 			standingScraper := scrapers.NewScrapedStandingService(
 				&driverRepoAdapter{repo: dRepo, db: db},
 				&seasonRepoAdapter{repo: sRepo, db: db},
-				&teamRepoAdapter{repo: tRepo, db: db},
+				&teamRepoAdapter{repo: tRepo, db: db, season: currentYear},
 				&dtsRepoAdapter{repo: dtsRepo, db: db},
 				txMgr,
 				nil,
