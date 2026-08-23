@@ -216,6 +216,10 @@ func matchByName(discovered []discoveredRace, raceName string) (discoveredRace, 
 		slugKey := slugNormalized
 		if slugKey == "greatbritain" {
 			slugKey = "british"
+		} else if slugKey == "belgium" {
+			slugKey = "belgian"
+		} else if slugKey == "hungary" {
+			slugKey = "hungarian"
 		}
 
 		if strings.Contains(target, slugNormalized) || strings.Contains(target, slugKey) {
