@@ -1,6 +1,7 @@
 package repository
 
 import (
+	"context"
 	"f1-api-go/internal/models"
 
 	"github.com/google/uuid"
@@ -13,6 +14,10 @@ type DriverRepository struct {
 
 func NewDriverRepository(db *gorm.DB) *DriverRepository {
 	return &DriverRepository{db: db}
+}
+
+func (r *DriverRepository) Save(ctx context.Context, driver *models.Driver) error {
+	return r.db.WithContext(ctx).Table("f1_api.driver").Save(driver).Error
 }
 
 func (r *DriverRepository) FindAllBySeasonName(season string) ([]models.Driver, error) {

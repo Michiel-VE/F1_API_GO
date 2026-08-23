@@ -1,4 +1,4 @@
-package services
+package scrapers
 
 import (
 	"context"
@@ -21,24 +21,6 @@ const (
 	dateSelector         = "span.typography-module_technical-m-bold__JDsxP"
 	dateFallbackSelector = "span.typography-module_technical-xs-regular__-W0Gs"
 )
-
-type Race struct {
-	ID            uuid.UUID
-	Name          string
-	Country       string
-	RaceStartDate time.Time
-	RaceEndDate   time.Time
-	Status        *RaceStatus
-	CreatedAt     time.Time
-	UpdatedAt     time.Time
-}
-
-type Season struct {
-	ID         uuid.UUID
-	SeasonName string
-	CreatedAt  time.Time
-	UpdatedAt  time.Time
-}
 
 type RaceStatus struct {
 	ID   uuid.UUID

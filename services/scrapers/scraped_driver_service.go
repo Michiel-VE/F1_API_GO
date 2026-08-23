@@ -1,4 +1,4 @@
-package services
+package scrapers
 
 import (
 	"context"
@@ -8,6 +8,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"f1-api-go/internal/models"
 
 	"github.com/PuerkitoBio/goquery"
 	"github.com/google/uuid"
@@ -24,25 +26,6 @@ const (
 	driverNumberSelector    = `p:nth-child(5)`
 	driverUserAgent         = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/58.0.3029.110 Safari/537.36"
 )
-
-type Driver struct {
-	ID              uuid.UUID
-	Firstname       string
-	Lastname        string
-	PermanentNumber int
-	DriverCode      string
-	Birthday        *time.Time
-	Country         string
-	CountryCode     string
-	Team            string
-	CreatedAt       time.Time
-	UpdatedAt       time.Time
-}
-
-type DriverRepository interface {
-	FindByFirstnameAndLastnameIgnoreCase(ctx context.Context, firstname, lastname string) (*Driver, error)
-	Save(ctx context.Context, driver *Driver) error
-}
 
 type ScrapedDriverService struct {
 	driverRepository DriverRepository
@@ -83,9 +66,9 @@ func (s *ScrapedDriverService) fetchDocument(ctx context.Context, url string) (*
 	return goquery.NewDocumentFromReader(resp.Body)
 }
 
-func (s *ScrapedDriverService) ScrapeF1Drivers(ctx context.Context) ([]*Driver, error) {
+func (s *ScrapedDriverService) ScrapeF1Drivers(ctx context.Context) ([]*models.Driver, error) {
 	startTime := time.Now()
-	var drivers []*Driver
+	var drivers []*models.Driver
 	s.logger.Info("Starting scrape of F1 drivers.")
 
 	doc, err := s.fetchDocument(ctx, "https://www.formula1.com/en/drivers")
@@ -133,12 +116,15 @@ func (s *ScrapedDriverService) ScrapeF1Drivers(ctx context.Context) ([]*Driver, 
 		}
 
 		countryCode := getCountryCode(country)
-		birthday := s.parseBirthday(strings.TrimSpace(driverDoc.Find(driverBirthdaySelector).First().Text()))
+		birthdayParsed := s.parseBirthday(strings.TrimSpace(driverDoc.Find(driverBirthdaySelector).First().Text()))
+		var birthday time.Time
+		if birthdayParsed != nil {
+			birthday = *birthdayParsed
+		}
 		driverCode := s.getDriverCode(lastName)
 		now := time.Now()
 
-		driver := &Driver{
-			ID:              uuid.New(),
+		driver := &models.Driver{
 			Firstname:       firstName,
 			Lastname:        lastName,
 			PermanentNumber: permanentNumber,
@@ -147,9 +133,10 @@ func (s *ScrapedDriverService) ScrapeF1Drivers(ctx context.Context) ([]*Driver, 
 			Country:         country,
 			CountryCode:     countryCode,
 			Team:            teamName,
-			CreatedAt:       now,
-			UpdatedAt:       now,
 		}
+		driver.ID = uuid.New()
+		driver.CreatedAt = now
+		driver.UpdatedAt = now
 
 		drivers = append(drivers, driver)
 		s.logger.Debug("Successfully parsed driver", slog.String("name", firstName+" "+lastName))
@@ -170,7 +157,7 @@ func (s *ScrapedDriverService) UpdateDriversFromScraper(ctx context.Context) err
 	}
 
 	for _, scrapedDriver := range scrapedDrivers {
-		existing, err := s.driverRepository.FindByFirstnameAndLastnameIgnoreCase(ctx, scrapedDriver.Firstname, scrapedDriver.Lastname)
+		existing, err := s.driverRepository.FindByFirstNameAndLastNameIgnoreCase(scrapedDriver.Firstname, scrapedDriver.Lastname)
 
 		if err != nil || existing == nil {
 			if err := s.driverRepository.Save(ctx, scrapedDriver); err != nil {
@@ -189,9 +176,9 @@ func (s *ScrapedDriverService) UpdateDriversFromScraper(ctx context.Context) err
 				existing.Lastname = scrapedDriver.Lastname
 				isDifferent = true
 			}
-			if (existing.Birthday == nil && scrapedDriver.Birthday != nil) ||
-				(existing.Birthday != nil && scrapedDriver.Birthday == nil) ||
-				(existing.Birthday != nil && scrapedDriver.Birthday != nil && !existing.Birthday.Equal(*scrapedDriver.Birthday)) {
+			if (existing.Birthday.IsZero() && !scrapedDriver.Birthday.IsZero()) ||
+				(!existing.Birthday.IsZero() && scrapedDriver.Birthday.IsZero()) ||
+				(!existing.Birthday.IsZero() && !scrapedDriver.Birthday.IsZero() && !existing.Birthday.Equal(scrapedDriver.Birthday)) {
 				existing.Birthday = scrapedDriver.Birthday
 				isDifferent = true
 			}
@@ -235,7 +222,6 @@ func (s *ScrapedDriverService) getDriverCode(lastname string) string {
 	return strings.ToUpper(lastname[:3])
 }
 
-// Stub implementation for compilation
 func getCountryCode(country string) string {
 	if len(country) >= 3 {
 		return strings.ToUpper(country[:3])

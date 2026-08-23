@@ -1,4 +1,4 @@
-package services
+package scrapers
 
 import (
 	"context"
@@ -10,62 +10,13 @@ import (
 	"strings"
 	"time"
 
+	"f1-api-go/internal/models"
+
 	"github.com/PuerkitoBio/goquery"
 	"github.com/google/uuid"
 )
 
 const tableBodyContentSelector = "table tbody"
-
-type ScrapedStanding struct {
-	Position    int
-	FirstName   string
-	LastName    string
-	DriverCode  string
-	Nationality string
-	Team        string
-	Points      int
-}
-
-type DriverTeamSeason struct {
-	ID        uuid.UUID
-	Driver    *Driver
-	Season    *Season
-	Team      *Team
-	Points    int
-	CreatedAt time.Time
-	UpdatedAt time.Time
-}
-
-type Team struct {
-	ID        uuid.UUID
-	Name      string
-	ShortName string
-	Country   string
-	Base      string
-	CreatedAt time.Time
-	UpdatedAt time.Time
-}
-
-type TeamRepository interface {
-	FindAll(ctx context.Context) ([]*Team, error)
-	FindAllByShortName(ctx context.Context, shortName string) ([]*Team, error)
-	Save(ctx context.Context, team *Team) error
-	Delete(ctx context.Context, team *Team) error
-}
-
-type DriverTeamSeasonRepository interface {
-	FindByDriverAndSeasonAndTeam(ctx context.Context, driver *Driver, season *Season, team *Team) (*DriverTeamSeason, error)
-	Save(ctx context.Context, dts *DriverTeamSeason) (*DriverTeamSeason, error)
-}
-
-type DriverStandingRepository interface {
-	FindByLastnameIgnoreCase(ctx context.Context, lastname string) (*Driver, error)
-	FindByFirstnameIgnoreCase(ctx context.Context, firstname string) (*Driver, error)
-}
-
-type TransactionManager interface {
-	WithTx(ctx context.Context, fn func(ctx context.Context) error) error
-}
 
 type ScrapedStandingService struct {
 	driverRepository           DriverStandingRepository
@@ -213,7 +164,7 @@ func (s *ScrapedStandingService) UpdateDriverAndPointsFromScraperForSeason(ctx c
 		return fmt.Errorf("season %s not found", year)
 	}
 
-	driverCache := make(map[string]*Driver)
+	driverCache := make(map[string]*models.Driver)
 
 	for _, data := range scrapedData {
 		err := s.txManager.WithTx(ctx, func(txCtx context.Context) error {
@@ -231,13 +182,13 @@ func (s *ScrapedStandingService) UpdateDriverAndPointsFromScraperForSeason(ctx c
 	return nil
 }
 
-func (s *ScrapedStandingService) ProcessSingleStanding(ctx context.Context, data *ScrapedStanding, season *Season, driverCache map[string]*Driver) error {
+func (s *ScrapedStandingService) ProcessSingleStanding(ctx context.Context, data *ScrapedStanding, season *Season, driverCache map[string]*models.Driver) error {
 	driver, ok := driverCache[data.LastName]
 	if !ok {
 		var err error
-		driver, err = s.driverRepository.FindByLastnameIgnoreCase(ctx, data.LastName)
+		driver, err = s.driverRepository.FindByLastNameIgnoreCase(data.LastName)
 		if err != nil || driver == nil {
-			driver, err = s.driverRepository.FindByFirstnameIgnoreCase(ctx, data.LastName)
+			driver, err = s.driverRepository.FindByFirstNameIgnoreCase(data.LastName)
 			if err != nil || driver == nil {
 				return fmt.Errorf("driver not found: %s", data.LastName)
 			}

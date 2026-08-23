@@ -42,12 +42,12 @@ resource "aws_lambda_function" "f1_lambda" {
 
   environment {
     variables = {
-      ENV              = var.env
-      APP_SECRET_NAME  = var.app_secret_name
-      JWT_SECRET_KEY   = var.jwt_secret_key
-      BASE_URL         = "https://f1-api.michielve.be"
-      FRONTEND_URL     = "https://f1.michielve.be"
-      SERVER_PORT      = "8080"
+      ENV             = var.env
+      APP_SECRET_NAME = var.app_secret_name
+      JWT_SECRET_KEY  = var.jwt_secret_key
+      BASE_URL        = "https://f1-api.michielve.be"
+      FRONTEND_URL    = "https://f1.michielve.be"
+      SERVER_PORT     = "8080"
     }
   }
 
@@ -97,9 +97,10 @@ resource "aws_lambda_function" "race_scheduler" {
 
   environment {
     variables = {
-      ENV         = var.env
-      APP_SECRET_NAME = var.app_secret_name
-      RUN_MODE    = "scraper-race"
+      ENV                       = var.env
+      APP_SECRET_NAME           = var.app_secret_name
+      RUN_MODE                  = "scraper-race"
+      AWS_LWA_PASS_THROUGH_PATH = "/events"
     }
   }
 
@@ -138,9 +139,10 @@ resource "aws_lambda_function" "driver_team_update" {
 
   environment {
     variables = {
-      ENV         = var.env
-      APP_SECRET_NAME = var.app_secret_name
-      RUN_MODE    = "scraper-driver-team"
+      ENV                       = var.env
+      APP_SECRET_NAME           = var.app_secret_name
+      RUN_MODE                  = "scraper-driver-team"
+      AWS_LWA_PASS_THROUGH_PATH = "/events"
     }
   }
 
@@ -179,9 +181,10 @@ resource "aws_lambda_function" "standing_scheduler" {
 
   environment {
     variables = {
-      ENV         = var.env
-      APP_SECRET_NAME = var.app_secret_name
-      RUN_MODE    = "scraper-standing"
+      ENV                       = var.env
+      APP_SECRET_NAME           = var.app_secret_name
+      RUN_MODE                  = "scraper-standing"
+      AWS_LWA_PASS_THROUGH_PATH = "/events"
     }
   }
 
@@ -220,9 +223,10 @@ resource "aws_lambda_function" "race_result_scheduler" {
 
   environment {
     variables = {
-      ENV         = var.env
-      APP_SECRET_NAME = var.app_secret_name
-      RUN_MODE    = "scraper-race-result"
+      ENV                       = var.env
+      APP_SECRET_NAME           = var.app_secret_name
+      RUN_MODE                  = "scraper-race-result"
+      AWS_LWA_PASS_THROUGH_PATH = "/events"
     }
   }
 

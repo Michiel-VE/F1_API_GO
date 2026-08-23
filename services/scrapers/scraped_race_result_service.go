@@ -1,4 +1,4 @@
-package services
+package scrapers
 
 import (
 	"context"
@@ -14,37 +14,9 @@ import (
 	"github.com/google/uuid"
 )
 
-type DriverRaceResult struct {
-	ID            uuid.UUID
-	Driver        *Driver
-	Race          *Race
-	Season        *Season
-	Points        float64
-	LapsCompleted int
-	Status        string
-	CreatedAt     time.Time
-	UpdatedAt     time.Time
-}
-
-type DriverRaceResultRepository interface {
-	ExistsByDriverAndRaceAndSeason(ctx context.Context, driver *Driver, race *Race, season *Season) (bool, error)
-	Save(ctx context.Context, result *DriverRaceResult) error
-}
-
-type RaceRepository interface {
-	FindFirstFinishedRaceMissingResults(ctx context.Context, now time.Time, seasonName string) (*Race, error)
-	FindByNameAndRaceStartDateAndRaceEndDate(ctx context.Context, name string, start, end time.Time) (*Race, error)
-	Save(ctx context.Context, race *Race) (*Race, error)
-}
-
-type SeasonRepository interface {
-	FindBySeasonName(ctx context.Context, seasonName string) (*Season, error)
-	Save(ctx context.Context, season *Season) (*Season, error)
-}
-
 type ScrapedRaceResultService struct {
 	baseUrl                    string
-	driverRepository           DriverRepository
+	driverRepository           RaceDriverRepository
 	raceRepository             RaceRepository
 	seasonRepository           SeasonRepository
 	driverRaceResultRepository DriverRaceResultRepository
@@ -55,7 +27,7 @@ type ScrapedRaceResultService struct {
 
 func NewScrapedRaceResultService(
 	baseUrl string,
-	driverRepo DriverRepository,
+	driverRepo RaceDriverRepository,
 	raceRepo RaceRepository,
 	seasonRepo SeasonRepository,
 	resultRepo DriverRaceResultRepository,
@@ -161,8 +133,8 @@ func (s *ScrapedRaceResultService) discoverRaceResultUrls(ctx context.Context, y
 		return urls
 	}
 
-	doc.Find("a[href*=/race-result]").Each(func(i int, s *goquery.Selection) {
-		if href, exists := s.Attr("href"); exists {
+	doc.Find("a[href*=/race-result]").Each(func(i int, sel *goquery.Selection) {
+		if href, exists := sel.Attr("href"); exists {
 			if !strings.HasPrefix(href, "http") {
 				href = s.baseUrl + href
 			}
@@ -262,9 +234,4 @@ func (s *ScrapedRaceResultService) deriveStatus(pos, timeStr string) string {
 		return "DNS"
 	}
 	return "DNF"
-}
-
-// Stub interface method addition
-type DriverRepositoryWithCode interface {
-	FindByDriverCode(ctx context.Context, driverCode string) (*Driver, error)
 }
