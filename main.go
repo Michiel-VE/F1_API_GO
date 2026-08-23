@@ -171,6 +171,19 @@ func (a *dtsRepoAdapter) FindByDriverAndSeasonAndTeam(ctx context.Context, drive
 	return &scrapers.DriverTeamSeason{ID: m.ID, Driver: driver, Points: m.Points}, nil
 }
 func (a *dtsRepoAdapter) Save(ctx context.Context, dts *scrapers.DriverTeamSeason) (*scrapers.DriverTeamSeason, error) {
+	if dts == nil {
+		return nil, fmt.Errorf("driver team season data is nil")
+	}
+	if dts.Driver == nil {
+		return nil, fmt.Errorf("driver is nil for driver team season record")
+	}
+	if dts.Season == nil {
+		return nil, fmt.Errorf("season is nil for driver team season record")
+	}
+	if dts.Team == nil {
+		return nil, fmt.Errorf("team is nil for driver team season record")
+	}
+
 	m := &models.DriverTeamSeason{
 		ID:        dts.ID,
 		DriverID:  dts.Driver.ID,
