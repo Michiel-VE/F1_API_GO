@@ -1,8 +1,8 @@
 package controller
 
 import (
-	"fmt"
 	"net/http"
+	"strconv"
 
 	"f1-api-go/services"
 
@@ -31,7 +31,7 @@ func (d *DriverController) GetDriverById(c *gin.Context) {
 
 	driver, err := d.driverService.GetDriverById(c.Request.Context(), id)
 	if err != nil {
-		SendError(c, http.StatusNotFound, err.Error())
+		SendServiceError(c, err)
 		return
 	}
 
@@ -42,7 +42,7 @@ func (d *DriverController) GetDriverByLastName(c *gin.Context) {
 	lastName := c.Param("lastName")
 	driver, err := d.driverService.GetDriversByLastName(c.Request.Context(), lastName)
 	if err != nil {
-		SendError(c, http.StatusNotFound, "Driver not found")
+		SendServiceError(c, err)
 		return
 	}
 
@@ -53,7 +53,7 @@ func (d *DriverController) GetDriverCareerHistory(c *gin.Context) {
 	name := c.Param("name")
 	history, err := d.driverService.GetDriverCareerHistory(c.Request.Context(), name)
 	if err != nil {
-		SendError(c, http.StatusInternalServerError, err.Error())
+		SendServiceError(c, err)
 		return
 	}
 
@@ -68,9 +68,13 @@ func (d *DriverController) GetDriverRaceResults(c *gin.Context) {
 	}
 
 	season := c.Query("season")
+	if season != "" && !RequireSeason(c, season) {
+		return
+	}
+
 	results, err := d.driverRaceResultsService.GetDriverRaceResults(c.Request.Context(), id, season)
 	if err != nil {
-		SendError(c, http.StatusInternalServerError, err.Error())
+		SendServiceError(c, err)
 		return
 	}
 
@@ -79,9 +83,13 @@ func (d *DriverController) GetDriverRaceResults(c *gin.Context) {
 
 func (d *DriverController) GetDriversBySeason(c *gin.Context) {
 	season := c.Param("season")
+	if !RequireSeason(c, season) {
+		return
+	}
+
 	drivers, err := d.driverService.GetDriversBySeason(c.Request.Context(), season)
 	if err != nil {
-		SendError(c, http.StatusInternalServerError, err.Error())
+		SendServiceError(c, err)
 		return
 	}
 
@@ -95,15 +103,19 @@ func (d *DriverController) GetDriverByPermanentNumber(c *gin.Context) {
 		return
 	}
 
-	var permNum int
-	_, err := fmt.Sscanf(permNumStr, "%d", &permNum)
+	// strconv.Atoi rejects input like "12abc"; fmt.Sscanf("%d") accepted it as 12.
+	permNum, err := strconv.Atoi(permNumStr)
 	if err != nil {
 		SendError(c, http.StatusBadRequest, "Invalid permanent number format")
 		return
 	}
 
 	drivers, err := d.driverService.GetDriversByPermanentNumber(c.Request.Context(), permNum)
-	if err != nil || len(drivers) == 0 {
+	if err != nil {
+		SendServiceError(c, err)
+		return
+	}
+	if len(drivers) == 0 {
 		SendError(c, http.StatusNotFound, "Driver not found")
 		return
 	}
@@ -114,7 +126,7 @@ func (d *DriverController) GetDriverByPermanentNumber(c *gin.Context) {
 func (d *DriverController) GetAllDrivers(c *gin.Context) {
 	drivers, err := d.driverService.GetAllDrivers(c.Request.Context())
 	if err != nil {
-		SendError(c, http.StatusInternalServerError, err.Error())
+		SendServiceError(c, err)
 		return
 	}
 

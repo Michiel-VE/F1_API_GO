@@ -47,13 +47,13 @@ func (r *TeamRepository) FindAllTeamsBySeasonName(ctx context.Context, seasonNam
 
 func (r *TeamRepository) FindAllByNameContainingIgnoreCase(ctx context.Context, name string) ([]models.Team, error) {
 	var teams []models.Team
-	err := r.table(ctx).Where("LOWER(name) LIKE LOWER(?)", "%"+name+"%").Find(&teams).Error
+	err := r.table(ctx).Where("LOWER(name) LIKE LOWER(?)", "%"+escapeLike(name)+"%").Find(&teams).Error
 	return teams, err
 }
 
 func (r *TeamRepository) FindByName(ctx context.Context, name string) (*models.Team, error) {
 	var team models.Team
-	err := r.table(ctx).Where("LOWER(name) LIKE LOWER(?)", "%"+name+"%").First(&team).Error
+	err := r.table(ctx).Where("LOWER(name) LIKE LOWER(?)", "%"+escapeLike(name)+"%").First(&team).Error
 	if errors.Is(err, gorm.ErrRecordNotFound) {
 		return nil, nil
 	}

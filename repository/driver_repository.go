@@ -86,7 +86,7 @@ func (r *DriverRepository) FindCareerHistoryByLastNameIgnoreCase(ctx context.Con
 		}).
 		Preload("DriverTeamSeasons.Team").
 		Preload("DriverTeamSeasons.Season").
-		Where("LOWER(lastname) LIKE LOWER(?)", "%"+lastName+"%").
+		Where("LOWER(lastname) LIKE LOWER(?)", "%"+escapeLike(lastName)+"%").
 		Order("f1_api.driver.id").
 		Find(&drivers).Error
 

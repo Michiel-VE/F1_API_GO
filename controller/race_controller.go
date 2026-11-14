@@ -1,9 +1,8 @@
 package controller
 
 import (
-	"net/http"
-
 	"f1-api-go/services"
+
 	"github.com/gin-gonic/gin"
 )
 
@@ -19,9 +18,13 @@ func NewRaceController(raceService *services.RaceService) *RaceController {
 
 func (r *RaceController) GetAllRacesForSeason(c *gin.Context) {
 	season := c.Param("season")
+	if !RequireSeason(c, season) {
+		return
+	}
+
 	races, err := r.raceService.GetAllRacesForSeason(c.Request.Context(), season)
 	if err != nil {
-		SendError(c, http.StatusInternalServerError, err.Error())
+		SendServiceError(c, err)
 		return
 	}
 	SendListResponse(c, races)

@@ -5,6 +5,7 @@ import (
 
 	"f1-api-go/internal/requests"
 	"f1-api-go/services"
+
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 )
@@ -32,7 +33,7 @@ func (p *PredictionController) CreatePrediction(c *gin.Context) {
 	}
 
 	if err := p.predictionService.CreatePrediction(c.Request.Context(), user.ID, &req); err != nil {
-		SendError(c, http.StatusBadRequest, err.Error())
+		SendServiceError(c, err)
 		return
 	}
 
@@ -52,7 +53,7 @@ func (p *PredictionController) CreateTeamPrediction(c *gin.Context) {
 	}
 
 	if err := p.predictionService.CreateTeamPrediction(c.Request.Context(), user.ID, &req); err != nil {
-		SendError(c, http.StatusBadRequest, err.Error())
+		SendServiceError(c, err)
 		return
 	}
 
@@ -67,7 +68,7 @@ func (p *PredictionController) GetUserPools(c *gin.Context) {
 
 	pools, err := p.predictionService.GetUserPools(c.Request.Context(), user.ID)
 	if err != nil {
-		SendError(c, http.StatusInternalServerError, err.Error())
+		SendServiceError(c, err)
 		return
 	}
 	c.JSON(http.StatusOK, pools)
@@ -87,7 +88,7 @@ func (p *PredictionController) GetPoolDetails(c *gin.Context) {
 
 	details, err := p.predictionService.GetPoolDetails(c.Request.Context(), user.ID, poolID)
 	if err != nil {
-		SendError(c, http.StatusNotFound, err.Error())
+		SendServiceError(c, err)
 		return
 	}
 
@@ -102,7 +103,7 @@ func (p *PredictionController) GetPredictionStatus(c *gin.Context) {
 
 	status, err := p.predictionService.GetPredictionStatus(c.Request.Context(), user.ID)
 	if err != nil {
-		SendError(c, http.StatusInternalServerError, err.Error())
+		SendServiceError(c, err)
 		return
 	}
 	c.JSON(http.StatusOK, status)
@@ -116,7 +117,7 @@ func (p *PredictionController) GetPersonalTeamPrediction(c *gin.Context) {
 
 	prediction, err := p.predictionService.GetPersonalTeamPrediction(c.Request.Context(), user.ID)
 	if err != nil {
-		SendError(c, http.StatusNotFound, err.Error())
+		SendServiceError(c, err)
 		return
 	}
 	c.JSON(http.StatusOK, prediction)
@@ -136,7 +137,7 @@ func (p *PredictionController) GetPoolTeamPrediction(c *gin.Context) {
 
 	prediction, err := p.predictionService.GetPoolTeamPrediction(c.Request.Context(), user.ID, poolID)
 	if err != nil {
-		SendError(c, http.StatusNotFound, err.Error())
+		SendServiceError(c, err)
 		return
 	}
 	c.JSON(http.StatusOK, prediction)
@@ -156,7 +157,7 @@ func (p *PredictionController) CreatePool(c *gin.Context) {
 
 	pool, err := p.predictionService.CreatePool(c.Request.Context(), user.ID, &req)
 	if err != nil {
-		SendError(c, http.StatusBadRequest, err.Error())
+		SendServiceError(c, err)
 		return
 	}
 
@@ -180,7 +181,7 @@ func (p *PredictionController) JoinPool(c *gin.Context) {
 	}
 
 	if err := p.predictionService.JoinPool(c.Request.Context(), user.ID, &req); err != nil {
-		SendError(c, http.StatusBadRequest, err.Error())
+		SendServiceError(c, err)
 		return
 	}
 
@@ -200,7 +201,7 @@ func (p *PredictionController) LeavePool(c *gin.Context) {
 	}
 
 	if err := p.predictionService.LeaveOrDeletePool(c.Request.Context(), user.ID, poolID); err != nil {
-		SendError(c, http.StatusBadRequest, err.Error())
+		SendServiceError(c, err)
 		return
 	}
 
@@ -226,7 +227,7 @@ func (p *PredictionController) KickMember(c *gin.Context) {
 	}
 
 	if err := p.predictionService.KickMemberOrDeletePool(c.Request.Context(), user.ID, poolID, memberID); err != nil {
-		SendError(c, http.StatusForbidden, err.Error())
+		SendServiceError(c, err)
 		return
 	}
 

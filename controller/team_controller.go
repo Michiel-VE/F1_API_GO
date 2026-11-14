@@ -4,6 +4,7 @@ import (
 	"net/http"
 
 	"f1-api-go/services"
+
 	"github.com/gin-gonic/gin"
 )
 
@@ -19,9 +20,13 @@ func NewTeamController(teamService *services.TeamService) *TeamController {
 
 func (t *TeamController) GetAllTeamsForSeason(c *gin.Context) {
 	season := c.Param("season")
+	if !RequireSeason(c, season) {
+		return
+	}
+
 	teams, err := t.teamService.GetAllTeamsForSeason(c.Request.Context(), season)
 	if err != nil {
-		SendError(c, http.StatusInternalServerError, err.Error())
+		SendServiceError(c, err)
 		return
 	}
 
@@ -32,7 +37,7 @@ func (t *TeamController) SearchTeamByName(c *gin.Context) {
 	name := c.Param("name")
 	team, err := t.teamService.SearchTeamByName(c.Request.Context(), name)
 	if err != nil {
-		SendError(c, http.StatusNotFound, err.Error())
+		SendServiceError(c, err)
 		return
 	}
 

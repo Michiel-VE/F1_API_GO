@@ -27,6 +27,7 @@ func NewRaceRepository(db *gorm.DB) *RaceRepository {
 func (r *RaceRepository) FindAllRacesBySeasonName(ctx context.Context, seasonName string) ([]models.Race, error) {
 	var races []models.Race
 	err := DBFrom(ctx, r.db).Distinct().
+		Preload("Status").
 		Preload("RaceSeasons.Season").
 		Joins("JOIN f1_api.race_season rs ON rs.race_id = f1_api.race.id").
 		Joins("JOIN f1_api.season s ON s.id = rs.season_id").

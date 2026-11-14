@@ -5,7 +5,6 @@ import (
 	"net/http"
 	"net/url"
 	"os"
-	"regexp"
 
 	"github.com/gin-gonic/gin"
 )
@@ -38,6 +37,25 @@ func NewOAuth2AuthenticationSuccessHandler(
 	}
 }
 
+// isSafeReturnPath only accepts a path on our own site. The old regex
+// (^/[^/].*) let "/\evil.com" through (browsers treat a backslash like a slash)
+// and was not anchored at the end, so a trailing newline could smuggle extra
+// content in.
+func isSafeReturnPath(p string) bool {
+	if p == "" || len(p) > 512 || p[0] != '/' {
+		return false
+	}
+	if len(p) > 1 && (p[1] == '/' || p[1] == '\\') {
+		return false
+	}
+	for _, r := range p {
+		if r < 0x20 || r == 0x7f || r == '\\' {
+			return false
+		}
+	}
+	return true
+}
+
 func (h *OAuth2AuthenticationSuccessHandler) HandleSuccess(c *gin.Context, provider string, providerID string, attributes map[string]interface{}) {
 	envFrontendURL := os.Getenv("FRONTEND_URL")
 	baseURL := "http://localhost:4200"
@@ -50,9 +68,8 @@ func (h *OAuth2AuthenticationSuccessHandler) HandleSuccess(c *gin.Context, provi
 		cookieReturnURL = "/"
 	}
 
-	re := regexp.MustCompile(`^/[^/].*`)
 	finalReturnURL := "/"
-	if re.MatchString(cookieReturnURL) || cookieReturnURL == "/" {
+	if isSafeReturnPath(cookieReturnURL) {
 		finalReturnURL = cookieReturnURL
 	}
 
