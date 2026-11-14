@@ -20,16 +20,19 @@ func NewPoolRepository(db *gorm.DB) *PoolRepository {
 
 func (r *PoolRepository) FindByID(ctx context.Context, id uuid.UUID) (*models.Pool, error) {
 	var pool models.Pool
-	err := r.db.WithContext(ctx).Preload("Creator").Preload("Members").Where("id = ?", id).First(&pool).Error
+	err := DBFrom(ctx, r.db).Preload("Creator").Preload("Members").Where("id = ?", id).First(&pool).Error
 	if errors.Is(err, gorm.ErrRecordNotFound) {
 		return nil, nil
 	}
-	return &pool, err
+	if err != nil {
+		return nil, err
+	}
+	return &pool, nil
 }
 
 func (r *PoolRepository) FindByUserId(ctx context.Context, userID uuid.UUID) ([]*models.Pool, error) {
 	var pools []*models.Pool
-	err := r.db.WithContext(ctx).
+	err := DBFrom(ctx, r.db).
 		Preload("Creator").
 		Preload("Members").
 		Joins("JOIN f1_api.pool_members pm ON pm.pool_id = pools.id").
@@ -40,18 +43,21 @@ func (r *PoolRepository) FindByUserId(ctx context.Context, userID uuid.UUID) ([]
 
 func (r *PoolRepository) FindByInviteCode(ctx context.Context, inviteCode string) (*models.Pool, error) {
 	var pool models.Pool
-	err := r.db.WithContext(ctx).Preload("Creator").Preload("Members").Where("invite_code = ?", inviteCode).First(&pool).Error
+	err := DBFrom(ctx, r.db).Preload("Creator").Preload("Members").Where("invite_code = ?", inviteCode).First(&pool).Error
 	if errors.Is(err, gorm.ErrRecordNotFound) {
 		return nil, nil
 	}
-	return &pool, err
+	if err != nil {
+		return nil, err
+	}
+	return &pool, nil
 }
 
 func (r *PoolRepository) Save(ctx context.Context, pool *models.Pool) (*models.Pool, error) {
-	err := r.db.WithContext(ctx).Save(pool).Error
+	err := DBFrom(ctx, r.db).Save(pool).Error
 	return pool, err
 }
 
 func (r *PoolRepository) Delete(ctx context.Context, pool *models.Pool) error {
-	return r.db.WithContext(ctx).Delete(pool).Error
+	return DBFrom(ctx, r.db).Delete(pool).Error
 }

@@ -2,9 +2,9 @@ package scrapers
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
-	"net/http"
 	"strings"
 	"time"
 
@@ -17,12 +17,11 @@ const (
 	teamCardShortname   = "div.relative.z-40.w-full.flex.justify-center.gap-px-32 > h1"
 	teamCardName        = "dl.DataGrid-module_dataGrid__Zk5Y8.DataGrid-module_columns__rcgN8 > div > dd"
 	teamCardBaseCountry = "dl.DataGrid-module_dataGrid__Zk5Y8.DataGrid-module_columns__rcgN8 > div:nth-child(2) > dd"
-	teamUserAgent       = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/58.0.3029.110 Safari/537.36"
 )
 
 type ScrapedTeamService struct {
 	teamRepository TeamRepository
-	httpClient     *http.Client
+	fetcher        *pageFetcher
 	logger         *slog.Logger
 }
 
@@ -32,31 +31,9 @@ func NewScrapedTeamService(repo TeamRepository, logger *slog.Logger) *ScrapedTea
 	}
 	return &ScrapedTeamService{
 		teamRepository: repo,
-		httpClient: &http.Client{
-			Timeout: 15 * time.Second,
-		},
-		logger: logger,
+		fetcher:        newPageFetcher(15*time.Second, logger),
+		logger:         logger,
 	}
-}
-
-func (s *ScrapedTeamService) fetchDocument(ctx context.Context, url string) (*goquery.Document, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
-	if err != nil {
-		return nil, err
-	}
-	req.Header.Set("User-Agent", teamUserAgent)
-
-	resp, err := s.httpClient.Do(req)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("http request failed with status: %d", resp.StatusCode)
-	}
-
-	return goquery.NewDocumentFromReader(resp.Body)
 }
 
 func (s *ScrapedTeamService) ScrapeF1Teams(ctx context.Context) ([]*Team, error) {
@@ -64,7 +41,7 @@ func (s *ScrapedTeamService) ScrapeF1Teams(ctx context.Context) ([]*Team, error)
 	var teams []*Team
 	s.logger.Info("Starting scrape of F1 teams.")
 
-	doc, err := s.fetchDocument(ctx, "https://www.formula1.com/en/teams")
+	doc, err := s.fetcher.fetchDocument(ctx, "https://www.formula1.com/en/teams")
 	if err != nil {
 		s.logger.Error("Error loading F1 teams page", slog.String("error", err.Error()))
 		return nil, err
@@ -72,7 +49,11 @@ func (s *ScrapedTeamService) ScrapeF1Teams(ctx context.Context) ([]*Team, error)
 
 	cards := doc.Find(teamCardSelector)
 	s.logger.Info("Found team cards to process.", slog.Int("count", cards.Length()))
+	if cards.Length() == 0 {
+		return nil, errors.New("no team cards found on F1.com teams page - page layout may have changed")
+	}
 
+	failed := 0
 	cards.Each(func(i int, card *goquery.Selection) {
 		href, exists := card.Attr("href")
 		if !exists {
@@ -82,15 +63,25 @@ func (s *ScrapedTeamService) ScrapeF1Teams(ctx context.Context) ([]*Team, error)
 		teamPageURL := "https://www.formula1.com" + href
 		s.logger.Debug("Processing team page", slog.String("url", teamPageURL))
 
-		teamDoc, err := s.fetchDocument(ctx, teamPageURL)
+		teamDoc, err := s.fetcher.fetchDocument(ctx, teamPageURL)
 		if err != nil {
-			s.logger.Warn("Could not parse team card.", slog.String("error", err.Error()))
+			failed++
+			s.logger.Warn("Could not load team page.", slog.String("url", teamPageURL), slog.String("error", err.Error()))
 			return
 		}
 
 		shortName := strings.TrimSpace(teamDoc.Find(teamCardShortname).First().Text())
 		name := strings.TrimSpace(teamDoc.Find(teamCardName).First().Text())
 		townCountry := strings.TrimSpace(teamDoc.Find(teamCardBaseCountry).First().Text())
+
+		// Never save a team with an empty short name: an empty short name later
+		// matches every scraped team string in the standings scraper.
+		if shortName == "" || name == "" {
+			failed++
+			s.logger.Warn("Skipping team page with missing name/short name (selectors may be stale).",
+				slog.String("url", teamPageURL), slog.String("name", name), slog.String("shortName", shortName))
+			return
+		}
 
 		var country, town string
 		parts := strings.Split(townCountry, ",")
@@ -102,7 +93,7 @@ func (s *ScrapedTeamService) ScrapeF1Teams(ctx context.Context) ([]*Team, error)
 		}
 
 		now := time.Now()
-		team := &Team{
+		teams = append(teams, &Team{
 			ID:        uuid.New(),
 			Name:      name,
 			ShortName: shortName,
@@ -110,13 +101,16 @@ func (s *ScrapedTeamService) ScrapeF1Teams(ctx context.Context) ([]*Team, error)
 			Base:      town,
 			CreatedAt: now,
 			UpdatedAt: now,
-		}
-
-		teams = append(teams, team)
+		})
 	})
+
+	if len(teams) == 0 {
+		return nil, fmt.Errorf("no valid teams parsed from %d cards - selectors may be stale", cards.Length())
+	}
 
 	s.logger.Info("Scraping for teams completed.",
 		slog.Int("totalParsed", len(teams)),
+		slog.Int("failed", failed),
 		slog.Duration("duration", time.Since(startTime)),
 	)
 
@@ -129,51 +123,58 @@ func (s *ScrapedTeamService) UpdateTeamsFromScraper(ctx context.Context) error {
 		return err
 	}
 
+	var errs []error
 	for _, scrapedTeam := range scrapedTeams {
 		existingTeams, err := s.teamRepository.FindAllByShortName(ctx, scrapedTeam.ShortName)
 		if err != nil {
 			s.logger.Error("Failed to query existing teams", slog.String("shortName", scrapedTeam.ShortName), slog.String("error", err.Error()))
+			errs = append(errs, fmt.Errorf("query %q: %w", scrapedTeam.ShortName, err))
 			continue
 		}
 
 		if len(existingTeams) == 0 {
 			if err := s.teamRepository.Save(ctx, scrapedTeam); err != nil {
 				s.logger.Error("Failed to save new team", slog.String("name", scrapedTeam.Name), slog.String("error", err.Error()))
+				errs = append(errs, fmt.Errorf("save %q: %w", scrapedTeam.Name, err))
 				continue
 			}
 			s.logger.Info("Saved new team", slog.String("name", scrapedTeam.Name))
-		} else {
-			teamToUpdate := existingTeams[0]
+			continue
+		}
 
-			isDifferent := teamToUpdate.Name != scrapedTeam.Name ||
-				teamToUpdate.Base != scrapedTeam.Base ||
-				teamToUpdate.Country != scrapedTeam.Country
+		// The repository returns oldest-first, so the kept team is the one most
+		// likely to hold the driver_team_season references.
+		teamToUpdate := existingTeams[0]
 
-			if isDifferent {
-				teamToUpdate.Name = scrapedTeam.Name
-				teamToUpdate.Base = scrapedTeam.Base
-				teamToUpdate.Country = scrapedTeam.Country
-				teamToUpdate.UpdatedAt = time.Now()
+		isDifferent := teamToUpdate.Name != scrapedTeam.Name ||
+			teamToUpdate.Base != scrapedTeam.Base ||
+			teamToUpdate.Country != scrapedTeam.Country
 
-				if err := s.teamRepository.Save(ctx, teamToUpdate); err != nil {
-					s.logger.Error("Failed to update team", slog.String("shortName", teamToUpdate.ShortName), slog.String("error", err.Error()))
-					continue
-				}
-				s.logger.Info("Updated existing team", slog.String("shortName", teamToUpdate.ShortName))
+		if isDifferent {
+			teamToUpdate.Name = scrapedTeam.Name
+			teamToUpdate.Base = scrapedTeam.Base
+			teamToUpdate.Country = scrapedTeam.Country
+			teamToUpdate.UpdatedAt = time.Now()
+
+			if err := s.teamRepository.Save(ctx, teamToUpdate); err != nil {
+				s.logger.Error("Failed to update team", slog.String("shortName", teamToUpdate.ShortName), slog.String("error", err.Error()))
+				errs = append(errs, fmt.Errorf("update %q: %w", teamToUpdate.ShortName, err))
+				continue
 			}
+			s.logger.Info("Updated existing team", slog.String("shortName", teamToUpdate.ShortName))
+		}
 
-			if len(existingTeams) > 1 {
-				for i := 1; i < len(existingTeams); i++ {
-					if err := s.teamRepository.Delete(ctx, existingTeams[i]); err != nil {
-						s.logger.Error("Failed to delete duplicate team", slog.String("error", err.Error()))
-					}
+		if len(existingTeams) > 1 {
+			for i := 1; i < len(existingTeams); i++ {
+				if err := s.teamRepository.Delete(ctx, existingTeams[i]); err != nil {
+					s.logger.Error("Failed to delete duplicate team", slog.String("error", err.Error()))
 				}
-				s.logger.Info("Cleaned up duplicates for team",
-					slog.Int("count", len(existingTeams)-1),
-					slog.String("shortName", scrapedTeam.ShortName),
-				)
 			}
+			s.logger.Info("Cleaned up duplicates for team",
+				slog.Int("count", len(existingTeams)-1),
+				slog.String("shortName", scrapedTeam.ShortName),
+			)
 		}
 	}
-	return nil
+	return errors.Join(errs...)
 }

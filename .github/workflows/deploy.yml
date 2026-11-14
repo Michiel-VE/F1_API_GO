@@ -3,30 +3,56 @@ name: Deploy F1 API
 on:
   push:
     branches: [main]
+  pull_request:
+    branches: [main]
   workflow_dispatch: {}
+
+# Never run two deploys at once (two terraform applies would fight over state).
+concurrency:
+  group: deploy-${{ github.ref }}
+  cancel-in-progress: false
 
 env:
   AWS_REGION: eu-north-1
   ECR_REPOSITORY: f1-api
   TF_WORKING_DIR: infra
 
-permissions:
-  id-token: write   # required for OIDC auth to AWS
-  contents: read
-
 jobs:
-  deploy:
+  # Runs on every push AND every pull request. A failure here stops the deploy.
+  test:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Build
+        run: go build ./...
+
+      - name: Vet
+        run: go vet ./...
+
+      - name: Test
+        run: go test ./...
+
+  deploy:
+    needs: test
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write   # required for OIDC auth to AWS
+      contents: read
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      # --- AWS auth via OIDC (no long-lived keys stored in GitHub) ---
-      # One-time setup required: create an IAM role that trusts
-      # GitHub's OIDC provider (token.actions.githubusercontent.com)
-      # and grants it permission to push to ECR + run this Terraform.
-      # Store its ARN as the AWS_DEPLOY_ROLE_ARN secret.
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
@@ -37,13 +63,8 @@ jobs:
         id: ecr-login
         uses: aws-actions/amazon-ecr-login@v2
 
-      # Unique tag per commit -- this is what makes the whole pipeline
-      # work with zero manual steps. Terraform's image_uri variable
-      # changes on every single deploy, so `terraform apply` always
-      # detects a diff, updates the Lambda function, publishes a new
-      # version (publish = true), and moves the alias to it -- all
-      # automatically, exactly as your aws_lambda_alias resource
-      # already expects.
+      # Unique tag per commit: terraform's image_uri changes on every deploy,
+      # so apply always updates the Lambda and moves the alias.
       - name: Set image tag
         id: vars
         run: echo "IMAGE_TAG=${GITHUB_SHA}" >> "$GITHUB_OUTPUT"
@@ -53,7 +74,7 @@ jobs:
           REGISTRY: ${{ steps.ecr-login.outputs.registry }}
           IMAGE_TAG: ${{ steps.vars.outputs.IMAGE_TAG }}
         run: |
-          docker build --provenance=false \
+          docker build --platform linux/amd64 --provenance=false \
             -t "$REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG" .
           docker push "$REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG"
 

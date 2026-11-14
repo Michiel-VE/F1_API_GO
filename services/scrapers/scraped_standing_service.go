@@ -2,9 +2,9 @@ package scrapers
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
-	"net/http"
 	"regexp"
 	"strconv"
 	"strings"
@@ -18,13 +18,18 @@ import (
 
 const tableBodyContentSelector = "table tbody"
 
+var (
+	upperCodeExact  = regexp.MustCompile(`^[A-Z]{3}$`)
+	upperCodeSuffix = regexp.MustCompile(`[A-Z]{3}$`)
+)
+
 type ScrapedStandingService struct {
 	driverRepository           DriverStandingRepository
 	seasonRepository           SeasonRepository
 	teamRepository             TeamRepository
 	driverTeamSeasonRepository DriverTeamSeasonRepository
 	txManager                  TransactionManager
-	httpClient                 *http.Client
+	fetcher                    *pageFetcher
 	logger                     *slog.Logger
 }
 
@@ -45,109 +50,102 @@ func NewScrapedStandingService(
 		teamRepository:             teamRepo,
 		driverTeamSeasonRepository: dtsRepo,
 		txManager:                  txManager,
-		httpClient: &http.Client{
-			Timeout: 10 * time.Second,
-		},
-		logger: logger,
+		fetcher:                    newPageFetcher(15*time.Second, logger),
+		logger:                     logger,
 	}
 }
 
+// parseDriverCell splits the standings "Driver" cell ("Max Verstappen VER",
+// "Max VerstappenVER", ...) into first name, last name and 3-letter code.
+func parseDriverCell(text string) (first, last, code string) {
+	fields := strings.Fields(strings.TrimSpace(text))
+	if len(fields) == 0 {
+		return "", "", ""
+	}
+	first = fields[0]
+	rest := append([]string(nil), fields[1:]...)
+	if len(rest) == 0 {
+		return first, "", ""
+	}
+
+	lastField := rest[len(rest)-1]
+	switch {
+	case upperCodeExact.MatchString(lastField):
+		code = lastField
+		rest = rest[:len(rest)-1]
+	case len(lastField) > 3 && upperCodeSuffix.MatchString(lastField):
+		code = lastField[len(lastField)-3:]
+		rest[len(rest)-1] = lastField[:len(lastField)-3]
+	}
+	return first, strings.TrimSpace(strings.Join(rest, " ")), code
+}
+
 func (s *ScrapedStandingService) ScrapeF1Standings(ctx context.Context, year string) ([]*ScrapedStanding, error) {
-	var scrapedStandings []*ScrapedStanding
 	s.logger.Info("Starting to scrape F1 standings for year", slog.String("year", year))
 
 	url := fmt.Sprintf("https://www.formula1.com/en/results/%s/drivers", year)
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	doc, err := s.fetcher.fetchDocument(ctx, url)
 	if err != nil {
-		return nil, err
-	}
-	req.Header.Set("User-Agent", "Mozilla/5.0")
-
-	resp, err := s.httpClient.Do(req)
-	if err != nil {
-		s.logger.Error("Error scraping F1 standings", slog.String("year", year), slog.String("error", err.Error()))
-		return scrapedStandings, err
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		s.logger.Warn("Failed to retrieve standings page", slog.String("year", year), slog.Int("status", resp.StatusCode))
-		return scrapedStandings, nil
-	}
-
-	doc, err := goquery.NewDocumentFromReader(resp.Body)
-	if err != nil {
-		s.logger.Error("Error parsing standings response HTML", slog.String("year", year), slog.String("error", err.Error()))
-		return scrapedStandings, err
+		return nil, fmt.Errorf("fetching standings for %s: %w", year, err)
 	}
 
 	tableBody := doc.Find(tableBodyContentSelector).First()
 	if tableBody.Length() == 0 {
-		s.logger.Warn("No standings table found on page for year. Scrape failed.", slog.String("year", year))
-		return scrapedStandings, nil
+		return nil, fmt.Errorf("no standings table found at %s - page layout may have changed", url)
 	}
 
-	upperCodeRegex := regexp.MustCompile(`[A-Z]{3}`)
+	var standings []*ScrapedStanding
+	rowCount, skipped := 0, 0
 
 	tableBody.Find("tr").Each(func(i int, row *goquery.Selection) {
 		cells := row.Find("td")
-		if cells.Length() >= 5 {
-			posText := strings.TrimSpace(cells.Eq(0).Text())
-			position, _ := strconv.Atoi(posText)
-
-			nameData := strings.Fields(strings.TrimSpace(cells.Eq(1).Text()))
-			if len(nameData) == 0 {
-				return
-			}
-
-			firstName := nameData[0]
-			lastName := "N/A"
-			driverCode := "N/A"
-
-			if len(nameData) > 1 {
-				lastIndex := len(nameData) - 1
-				lastElement := nameData[lastIndex]
-				nameEndIndex := lastIndex
-
-				if len(lastElement) == 3 && upperCodeRegex.MatchString(lastElement) && lastIndex > 0 {
-					driverCode = lastElement
-					nameEndIndex = lastIndex - 1
-				} else if len(lastElement) > 3 && upperCodeRegex.MatchString(lastElement[len(lastElement)-3:]) {
-					driverCode = lastElement[len(lastElement)-3:]
-					nameData[lastIndex] = lastElement[:len(lastElement)-3]
-				} else {
-					driverCode = "N/A"
-					nameEndIndex = lastIndex
-				}
-
-				var sb strings.Builder
-				for idx := 1; idx <= nameEndIndex; idx++ {
-					sb.WriteString(nameData[idx])
-					if idx < nameEndIndex {
-						sb.WriteString(" ")
-					}
-				}
-				lastName = strings.TrimSpace(sb.String())
-			}
-
-			pointsText := strings.TrimSpace(cells.Eq(4).Text())
-			points, _ := strconv.Atoi(pointsText)
-
-			standing := &ScrapedStanding{
-				Position:    position,
-				FirstName:   firstName,
-				LastName:    lastName,
-				DriverCode:  driverCode,
-				Nationality: strings.TrimSpace(cells.Eq(2).Text()),
-				Team:        strings.TrimSpace(cells.Eq(3).Text()),
-				Points:      points,
-			}
-			scrapedStandings = append(scrapedStandings, standing)
+		if cells.Length() < 5 {
+			return
 		}
+		rowCount++
+
+		position, err := strconv.Atoi(strings.TrimSpace(cells.Eq(0).Text()))
+		if err != nil {
+			skipped++
+			s.logger.Warn("Skipping standings row: bad position", slog.Int("row", i), slog.String("text", strings.TrimSpace(cells.Eq(0).Text())))
+			return
+		}
+
+		first, last, code := parseDriverCell(cells.Eq(1).Text())
+		if first == "" {
+			skipped++
+			s.logger.Warn("Skipping standings row: empty driver cell", slog.Int("row", i))
+			return
+		}
+
+		pointsText := strings.TrimSpace(cells.Eq(4).Text())
+		points, err := strconv.Atoi(pointsText)
+		if err != nil {
+			// Never turn an unparseable value into 0: that would overwrite a real total.
+			skipped++
+			s.logger.Warn("Skipping standings row: bad points",
+				slog.String("driver", first+" "+last), slog.String("text", pointsText))
+			return
+		}
+
+		standings = append(standings, &ScrapedStanding{
+			Position:    position,
+			FirstName:   first,
+			LastName:    last,
+			DriverCode:  code,
+			Nationality: strings.TrimSpace(cells.Eq(2).Text()),
+			Team:        strings.TrimSpace(cells.Eq(3).Text()),
+			Points:      points,
+		})
 	})
 
-	s.logger.Info("Successfully scraped standings for year.", slog.Int("count", len(scrapedStandings)), slog.String("year", year))
-	return scrapedStandings, nil
+	if len(standings) == 0 {
+		return nil, fmt.Errorf("no standings rows parsed from %s (%d rows seen, %d skipped) - page layout may have changed", url, rowCount, skipped)
+	}
+
+	s.logger.Info("Successfully scraped standings for year.",
+		slog.String("year", year), slog.Int("count", len(standings)), slog.Int("skipped", skipped))
+	return standings, nil
 }
 
 func (s *ScrapedStandingService) UpdateDriverAndPointsFromScraperForSeason(ctx context.Context, year string) error {
@@ -155,81 +153,155 @@ func (s *ScrapedStandingService) UpdateDriverAndPointsFromScraperForSeason(ctx c
 	s.logger.Info("Starting point update for season:", slog.String("year", year))
 
 	scrapedData, err := s.ScrapeF1Standings(ctx, year)
-	if err != nil || len(scrapedData) == 0 {
-		return err
-	}
-
-	season, err := s.seasonRepository.FindBySeasonName(ctx, year)
-	if err != nil || season == nil {
-		return fmt.Errorf("season %s not found", year)
-	}
-
-	driverCache := make(map[string]*models.Driver)
-
-	for _, data := range scrapedData {
-		err := s.txManager.WithTx(ctx, func(txCtx context.Context) error {
-			return s.ProcessSingleStanding(txCtx, data, season, driverCache)
-		})
-		if err != nil {
-			s.logger.Error("Failed to process standing for driver", slog.String("lastname", data.LastName), slog.String("error", err.Error()))
-		}
-	}
-
-	s.logger.Info("Finished updating points for season.",
-		slog.String("year", year),
-		slog.Duration("duration", time.Since(startTime)),
-	)
-	return nil
-}
-
-func (s *ScrapedStandingService) ProcessSingleStanding(ctx context.Context, data *ScrapedStanding, season *Season, driverCache map[string]*models.Driver) error {
-	driver, ok := driverCache[data.LastName]
-	if !ok {
-		var err error
-		driver, err = s.driverRepository.FindByLastNameIgnoreCase(data.LastName)
-		if err != nil || driver == nil {
-			driver, err = s.driverRepository.FindByFirstNameIgnoreCase(data.LastName)
-			if err != nil || driver == nil {
-				return fmt.Errorf("driver not found: %s", data.LastName)
-			}
-		}
-		driverCache[data.LastName] = driver
-	}
-
-	allTeams, err := s.teamRepository.FindAll(ctx)
 	if err != nil {
 		return err
 	}
 
-	scrapedTeamName := strings.ToLower(data.Team)
-	var matchedTeam *Team
-	for _, t := range allTeams {
-		if strings.Contains(scrapedTeamName, strings.ToLower(t.ShortName)) {
-			matchedTeam = t
-			break
-		}
+	season, err := s.seasonRepository.FindBySeasonName(ctx, year)
+	if err != nil {
+		return fmt.Errorf("season lookup failed for %s: %w", year, err)
+	}
+	if season == nil {
+		return fmt.Errorf("%w: %s", ErrSeasonNotFound, year)
 	}
 
+	teams, err := s.teamRepository.FindAll(ctx)
+	if err != nil {
+		return fmt.Errorf("loading teams failed: %w", err)
+	}
+	if len(teams) == 0 {
+		return errors.New("no teams in the database - run the team scraper first")
+	}
+
+	driverCache := make(map[string]*models.Driver)
+	var errs []error
+	updated := 0
+
+	for _, data := range scrapedData {
+		err := s.txManager.WithTx(ctx, func(txCtx context.Context) error {
+			return s.ProcessSingleStanding(txCtx, data, season, teams, driverCache)
+		})
+		if err != nil {
+			s.logger.Error("Failed to process standing for driver",
+				slog.String("driver", data.FirstName+" "+data.LastName),
+				slog.String("code", data.DriverCode),
+				slog.String("error", err.Error()))
+			errs = append(errs, fmt.Errorf("%s %s: %w", data.FirstName, data.LastName, err))
+			continue
+		}
+		updated++
+	}
+
+	s.logger.Info("Finished updating points for season.",
+		slog.String("year", year),
+		slog.Int("processed", updated),
+		slog.Int("failed", len(errs)),
+		slog.Duration("duration", time.Since(startTime)),
+	)
+	return errors.Join(errs...)
+}
+
+func driverCacheKey(d *ScrapedStanding) string {
+	if d.DriverCode != "" {
+		return "code:" + d.DriverCode
+	}
+	return "name:" + strings.ToLower(d.FirstName+"|"+d.LastName)
+}
+
+// findDriver tries the driver code first (unambiguous), then first+last name,
+// and only falls back to the surname alone when it is unique in the table
+// (historical drivers share surnames, and a bare surname lookup used to return
+// an arbitrary one of them).
+func (s *ScrapedStandingService) findDriver(ctx context.Context, data *ScrapedStanding, cache map[string]*models.Driver) (*models.Driver, error) {
+	key := driverCacheKey(data)
+	if d, ok := cache[key]; ok {
+		return d, nil
+	}
+
+	var driver *models.Driver
+	var err error
+
+	if len(data.DriverCode) == 3 {
+		if driver, err = s.driverRepository.FindByDriverCode(ctx, data.DriverCode); err != nil {
+			return nil, fmt.Errorf("driver lookup by code failed: %w", err)
+		}
+	}
+	if driver == nil && data.FirstName != "" && data.LastName != "" {
+		if driver, err = s.driverRepository.FindByFirstNameAndLastNameIgnoreCase(ctx, data.FirstName, data.LastName); err != nil {
+			return nil, fmt.Errorf("driver lookup by name failed: %w", err)
+		}
+	}
+	if driver == nil && data.LastName != "" {
+		matches, err := s.driverRepository.FindAllByLastNameIgnoreCase(ctx, data.LastName)
+		if err != nil {
+			return nil, fmt.Errorf("driver lookup by surname failed: %w", err)
+		}
+		switch {
+		case len(matches) == 1:
+			driver = matches[0]
+		case len(matches) > 1:
+			return nil, fmt.Errorf("ambiguous driver: %d drivers share surname %q and no driver code matched", len(matches), data.LastName)
+		}
+	}
+	if driver == nil {
+		return nil, fmt.Errorf("driver not found (code=%q)", data.DriverCode)
+	}
+
+	cache[key] = driver
+	return driver, nil
+}
+
+// matchTeam picks the team whose (non-empty) short name appears in the scraped
+// team string, preferring the longest short name so "Aston Martin Aramco
+// Mercedes" matches "Aston Martin" rather than "Mercedes".
+func matchTeam(teams []*Team, scraped string) *Team {
+	name := strings.ToLower(strings.TrimSpace(scraped))
+	var best *Team
+	bestLen := 0
+	for _, t := range teams {
+		short := strings.ToLower(strings.TrimSpace(t.ShortName))
+		if short == "" {
+			continue // an empty short name would match every team string
+		}
+		if strings.Contains(name, short) && len(short) > bestLen {
+			best, bestLen = t, len(short)
+		}
+	}
+	return best
+}
+
+func (s *ScrapedStandingService) ProcessSingleStanding(ctx context.Context, data *ScrapedStanding, season *Season, teams []*Team, driverCache map[string]*models.Driver) error {
+	driver, err := s.findDriver(ctx, data, driverCache)
+	if err != nil {
+		return err
+	}
+
+	matchedTeam := matchTeam(teams, data.Team)
 	if matchedTeam == nil {
-		return fmt.Errorf("team not found for scraped name: %s", data.Team)
+		return fmt.Errorf("team not found for scraped name: %q", data.Team)
 	}
 
 	dts, err := s.driverTeamSeasonRepository.FindByDriverAndSeasonAndTeam(ctx, driver, season, matchedTeam)
+	if err != nil {
+		// A lookup error must not fall through to "create": that inserts duplicates.
+		return fmt.Errorf("driver/team/season lookup failed: %w", err)
+	}
 	now := time.Now()
 
-	if err == nil && dts != nil {
-		if dts.Points != data.Points {
-			s.logger.Info("Updating points for driver.",
-				slog.String("firstname", driver.Firstname),
-				slog.String("lastname", driver.Lastname),
-				slog.Int("points", data.Points),
-			)
-			dts.Points = data.Points
-			dts.UpdatedAt = now
-			_, err = s.driverTeamSeasonRepository.Save(ctx, dts)
-			return err
+	if dts != nil {
+		if dts.Points == data.Points {
+			return nil
 		}
-		return nil
+		s.logger.Info("Updating points for driver.",
+			slog.String("firstname", driver.Firstname),
+			slog.String("lastname", driver.Lastname),
+			slog.Int("old_points", dts.Points),
+			slog.Int("points", data.Points),
+		)
+		dts.Points = data.Points
+		dts.UpdatedAt = now
+		_, err = s.driverTeamSeasonRepository.Save(ctx, dts)
+		return err
 	}
 
 	s.logger.Info("Creating new DTS for driver.",
@@ -238,7 +310,7 @@ func (s *ScrapedStandingService) ProcessSingleStanding(ctx context.Context, data
 		slog.String("team", matchedTeam.ShortName),
 	)
 
-	newDTS := &DriverTeamSeason{
+	_, err = s.driverTeamSeasonRepository.Save(ctx, &DriverTeamSeason{
 		ID:        uuid.New(),
 		Driver:    driver,
 		Season:    season,
@@ -246,8 +318,6 @@ func (s *ScrapedStandingService) ProcessSingleStanding(ctx context.Context, data
 		Points:    data.Points,
 		CreatedAt: now,
 		UpdatedAt: now,
-	}
-
-	_, err = s.driverTeamSeasonRepository.Save(ctx, newDTS)
+	})
 	return err
 }

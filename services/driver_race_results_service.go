@@ -26,17 +26,20 @@ func NewDriverRaceResultsService(
 }
 
 func (s *DriverRaceResultsService) GetDriverRaceResults(ctx context.Context, driverID uuid.UUID, seasonName string) (*response.DriverRaceResultsResponse, error) {
-	driver, err := s.driverRepo.FindByID(driverID)
-	if err != nil || driver == nil {
-		return nil, fmt.Errorf("driver not found: %w", err)
+	driver, err := s.driverRepo.FindByID(ctx, driverID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to load driver: %w", err)
+	}
+	if driver == nil {
+		return nil, fmt.Errorf("%w: driver not found", ErrNotFound)
 	}
 
-	results, err := s.driverRaceResultsRepo.FindByDriverIDAndSeason(driverID, seasonName)
+	results, err := s.driverRaceResultsRepo.FindByDriverIDAndSeason(ctx, driverID, seasonName)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get race results: %w", err)
 	}
 
-	var raceResultDTOs []response.RaceResultDTO
+	raceResultDTOs := make([]response.RaceResultDTO, 0, len(results))
 	for _, res := range results {
 		raceName := ""
 		if res.Race.Name != "" {

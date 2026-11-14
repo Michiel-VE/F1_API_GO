@@ -2,12 +2,17 @@ package scrapers
 
 import (
 	"context"
+	"errors"
 	"time"
 
 	"f1-api-go/internal/models"
 
 	"github.com/google/uuid"
 )
+
+// ErrSeasonNotFound lets callers tell "this season isn't in the database"
+// (often fine, e.g. last year's season in January) from a real failure.
+var ErrSeasonNotFound = errors.New("season not found")
 
 type Race struct {
 	ID                uuid.UUID
@@ -94,11 +99,11 @@ type DriverRaceResultRepository interface {
 }
 
 type RaceRepository interface {
-	FindFirstFinishedRaceMissingResults(ctx context.Context, now time.Time, seasonName string) (*Race, error)
 	FindAllFinishedRacesMissingResults(ctx context.Context, now time.Time, seasonName string) ([]models.Race, error)
 	FindByNameAndRaceStartDateAndRaceEndDate(ctx context.Context, name string, start, end time.Time) (*Race, error)
+	FindByRaceStartDateInSeason(ctx context.Context, seasonName string, start time.Time) (*Race, error)
+	UpdateDetails(ctx context.Context, raceID uuid.UUID, name, country string, start, end time.Time) error
 	UpdatePastScheduledRacesToCompleted(ctx context.Context, now time.Time, seasonName string) error
-	UpdateExternalResultURL(raceID uuid.UUID, url string) error
 	Save(ctx context.Context, race *Race) (*Race, error)
 }
 
@@ -107,18 +112,22 @@ type SeasonRepository interface {
 	Save(ctx context.Context, season *Season) (*Season, error)
 }
 
+// RaceDriverRepository is what the race-result scraper needs.
 type RaceDriverRepository interface {
-	FindByFirstNameAndLastNameIgnoreCase(firstname, lastname string) (*models.Driver, error)
+	FindByDriverCode(ctx context.Context, driverCode string) (*models.Driver, error)
+}
+
+// DriverRepository is what the driver scraper needs.
+type DriverRepository interface {
+	FindByFirstNameAndLastNameIgnoreCase(ctx context.Context, firstname, lastname string) (*models.Driver, error)
 	FindByDriverCode(ctx context.Context, driverCode string) (*models.Driver, error)
 	Save(ctx context.Context, driver *models.Driver) error
 }
 
-type DriverRepository interface {
-	FindByFirstNameAndLastNameIgnoreCase(firstname, lastname string) (*models.Driver, error)
-	Save(ctx context.Context, driver *models.Driver) error
-}
-
+// DriverStandingRepository is what the standings scraper needs. Lookup order is
+// driver code, then first+last name, then a surname that is unique in the table.
 type DriverStandingRepository interface {
-	FindByLastNameIgnoreCase(lastname string) (*models.Driver, error)
-	FindByFirstNameIgnoreCase(firstname string) (*models.Driver, error)
+	FindByDriverCode(ctx context.Context, driverCode string) (*models.Driver, error)
+	FindByFirstNameAndLastNameIgnoreCase(ctx context.Context, firstname, lastname string) (*models.Driver, error)
+	FindAllByLastNameIgnoreCase(ctx context.Context, lastname string) ([]*models.Driver, error)
 }

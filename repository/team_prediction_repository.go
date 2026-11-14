@@ -20,40 +20,46 @@ func NewTeamPredictionRepository(db *gorm.DB) *TeamPredictionRepository {
 
 func (r *TeamPredictionRepository) FindPersonalByUserId(ctx context.Context, userID uuid.UUID) (*models.TeamPrediction, error) {
 	var prediction models.TeamPrediction
-	err := r.db.WithContext(ctx).Preload("PredictedTeams").
+	err := DBFrom(ctx, r.db).Preload("PredictedTeams").
 		Where("user_id = ? AND pool_id IS NULL", userID).
 		First(&prediction).Error
 	if errors.Is(err, gorm.ErrRecordNotFound) {
 		return nil, nil
 	}
-	return &prediction, err
+	if err != nil {
+		return nil, err
+	}
+	return &prediction, nil
 }
 
 func (r *TeamPredictionRepository) FindByUserIdAndPoolId(ctx context.Context, userID, poolID uuid.UUID) (*models.TeamPrediction, error) {
 	var prediction models.TeamPrediction
-	err := r.db.WithContext(ctx).Preload("PredictedTeams").
+	err := DBFrom(ctx, r.db).Preload("PredictedTeams").
 		Where("user_id = ? AND pool_id = ?", userID, poolID).
 		First(&prediction).Error
 	if errors.Is(err, gorm.ErrRecordNotFound) {
 		return nil, nil
 	}
-	return &prediction, err
+	if err != nil {
+		return nil, err
+	}
+	return &prediction, nil
 }
 
 func (r *TeamPredictionRepository) FindByPoolId(ctx context.Context, poolID uuid.UUID) ([]*models.TeamPrediction, error) {
 	var predictions []*models.TeamPrediction
-	err := r.db.WithContext(ctx).Preload("PredictedTeams").Preload("User").Where("pool_id = ?", poolID).Find(&predictions).Error
+	err := DBFrom(ctx, r.db).Preload("PredictedTeams").Preload("User").Where("pool_id = ?", poolID).Find(&predictions).Error
 	return predictions, err
 }
 
 func (r *TeamPredictionRepository) Save(ctx context.Context, prediction *models.TeamPrediction) error {
-	return r.db.WithContext(ctx).Save(prediction).Error
+	return DBFrom(ctx, r.db).Save(prediction).Error
 }
 
 func (r *TeamPredictionRepository) Delete(ctx context.Context, prediction *models.TeamPrediction) error {
-	return r.db.WithContext(ctx).Delete(prediction).Error
+	return DBFrom(ctx, r.db).Delete(prediction).Error
 }
 
 func (r *TeamPredictionRepository) DeleteByPoolId(ctx context.Context, poolID uuid.UUID) error {
-	return r.db.WithContext(ctx).Where("pool_id = ?", poolID).Delete(&models.TeamPrediction{}).Error
+	return DBFrom(ctx, r.db).Where("pool_id = ?", poolID).Delete(&models.TeamPrediction{}).Error
 }

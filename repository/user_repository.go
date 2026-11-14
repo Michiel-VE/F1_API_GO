@@ -18,18 +18,23 @@ func NewUserRepository(db *gorm.DB) *UserRepository {
 	return &UserRepository{db: db}
 }
 
+// FindByProviderAndProviderID keeps its original (context-less) signature
+// because it is probably called from OAuth code I haven't seen.
 func (r *UserRepository) FindByProviderAndProviderID(provider, providerID string) (*models.User, error) {
 	var user models.User
 	err := r.db.Where("provider = ? AND provider_id = ?", provider, providerID).First(&user).Error
 	if errors.Is(err, gorm.ErrRecordNotFound) {
 		return nil, nil
 	}
-	return &user, err
+	if err != nil {
+		return nil, err
+	}
+	return &user, nil
 }
 
 func (r *UserRepository) FindByEmail(ctx context.Context, email string) (*models.User, error) {
 	var user models.User
-	err := r.db.WithContext(ctx).Where("email = ?", email).First(&user).Error
+	err := DBFrom(ctx, r.db).Where("email = ?", email).First(&user).Error
 	if errors.Is(err, gorm.ErrRecordNotFound) {
 		return nil, nil
 	}
@@ -41,7 +46,7 @@ func (r *UserRepository) FindByEmail(ctx context.Context, email string) (*models
 
 func (r *UserRepository) FindByID(ctx context.Context, id uuid.UUID) (*models.User, error) {
 	var user models.User
-	err := r.db.WithContext(ctx).Where("id = ?", id).First(&user).Error
+	err := DBFrom(ctx, r.db).Where("id = ?", id).First(&user).Error
 	if errors.Is(err, gorm.ErrRecordNotFound) {
 		return nil, nil
 	}
@@ -49,4 +54,8 @@ func (r *UserRepository) FindByID(ctx context.Context, id uuid.UUID) (*models.Us
 		return nil, err
 	}
 	return &user, nil
+}
+
+func (r *UserRepository) Create(ctx context.Context, user *models.User) error {
+	return DBFrom(ctx, r.db).Create(user).Error
 }

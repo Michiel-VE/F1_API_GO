@@ -2,9 +2,9 @@ package scrapers
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
-	"net/http"
 	"regexp"
 	"strconv"
 	"strings"
@@ -14,6 +14,13 @@ import (
 	"github.com/google/uuid"
 )
 
+const (
+	// A race that finished longer ago than this and still has no F1.com page
+	// is no longer "probably not published yet": it's logged at ERROR and
+	// makes UpdatePendingRaceResults return an error so it can be alerted on.
+	staleAfter = 72 * time.Hour
+)
+
 type ScrapedRaceResultService struct {
 	baseUrl                    string
 	driverRepository           RaceDriverRepository
@@ -21,7 +28,7 @@ type ScrapedRaceResultService struct {
 	seasonRepository           SeasonRepository
 	driverRaceResultRepository DriverRaceResultRepository
 	txManager                  TransactionManager
-	httpClient                 *http.Client
+	fetcher                    *pageFetcher
 	logger                     *slog.Logger
 }
 
@@ -47,22 +54,13 @@ func NewScrapedRaceResultService(
 		seasonRepository:           seasonRepo,
 		driverRaceResultRepository: resultRepo,
 		txManager:                  txManager,
-		httpClient: &http.Client{
-			Timeout: 15 * time.Second,
-		},
-		logger: logger,
+		fetcher:                    newPageFetcher(15*time.Second, logger),
+		logger:                     logger,
 	}
 }
 
 var driverCodePattern = regexp.MustCompile(`([A-Z]{3})$`)
 var raceResultUrlPattern = regexp.MustCompile(`/races/\d+/([a-z0-9-]+)/race-result`)
-
-type discoveredRace struct {
-	name string
-	slug string
-	date string
-	url  string
-}
 
 func (s *ScrapedRaceResultService) UpdatePendingRaceResults(ctx context.Context, year string) error {
 	s.logger.Info("Syncing completed race results up to current date.", slog.String("year", year))
@@ -74,8 +72,11 @@ func (s *ScrapedRaceResultService) UpdatePendingRaceResults(ctx context.Context,
 	}
 
 	season, err := s.seasonRepository.FindBySeasonName(ctx, year)
-	if err != nil || season == nil {
-		return fmt.Errorf("season not found: %s", year)
+	if err != nil {
+		return fmt.Errorf("season lookup failed for %s: %w", year, err)
+	}
+	if season == nil {
+		return fmt.Errorf("%w: %s", ErrSeasonNotFound, year)
 	}
 
 	pendingModelRaces, err := s.raceRepository.FindAllFinishedRacesMissingResults(ctx, now, year)
@@ -87,7 +88,7 @@ func (s *ScrapedRaceResultService) UpdatePendingRaceResults(ctx context.Context,
 		return nil
 	}
 
-	var pendingRaces []Race
+	pendingRaces := make([]Race, 0, len(pendingModelRaces))
 	for _, m := range pendingModelRaces {
 		pendingRaces = append(pendingRaces, Race{
 			ID:            m.ID,
@@ -103,26 +104,46 @@ func (s *ScrapedRaceResultService) UpdatePendingRaceResults(ctx context.Context,
 		return fmt.Errorf("failed to discover race result pages: %w", err)
 	}
 
-	var unmatched []string
+	var (
+		errs      []error
+		unmatched []string
+		stale     []string
+		used      = make(map[string]struct{}) // result pages already claimed this run
+	)
+
 	for i := range pendingRaces {
 		race := &pendingRaces[i]
 
-		match, ok := matchRace(discovered, race)
+		match, method, ok := matchRace(discovered, race, used)
 		if !ok {
-			var rows []string
-			for _, d := range discovered {
-				rows = append(rows, fmt.Sprintf("%s|%s|%s", d.slug, d.date, d.name))
-			}
-			s.logger.Warn("F1.com result page not found for race - leaving unlinked, will retry next run.",
-				slog.String("race", race.Name),
-				slog.Time("race_start_date", race.RaceStartDate),
-				slog.String("discovered_slug_date_name", strings.Join(rows, " || ")))
 			unmatched = append(unmatched, race.Name)
+			attrs := []any{
+				slog.String("race", race.Name),
+				slog.String("country", race.Country),
+				slog.Time("race_start_date", race.RaceStartDate),
+				slog.Time("race_end_date", race.RaceEndDate),
+				slog.Int("discovered_count", len(discovered)),
+				slog.String("discovered", summarizeDiscovered(discovered)),
+			}
+			if isStaleRace(race, now) {
+				stale = append(stale, race.Name)
+				s.logger.Error("F1.com result page not found for race (overdue) - will retry next run.", attrs...)
+			} else {
+				s.logger.Warn("F1.com result page not found for race (may not be published yet) - will retry next run.", attrs...)
+			}
 			continue
 		}
 
+		used[match.url] = struct{}{}
+		s.logger.Info("Matched race to F1.com result page",
+			slog.String("race", race.Name),
+			slog.String("slug", match.slug),
+			slog.String("method", string(method)),
+			slog.String("url", match.url))
+
 		if err := s.ScrapeAndPersistRaceResult(ctx, match.url, season, race); err != nil {
 			s.logger.Error("Failed to scrape race result", slog.String("race", race.Name), slog.String("error", err.Error()))
+			errs = append(errs, fmt.Errorf("scrape %q: %w", race.Name, err))
 		}
 	}
 
@@ -131,17 +152,48 @@ func (s *ScrapedRaceResultService) UpdatePendingRaceResults(ctx context.Context,
 			slog.Int("count", len(unmatched)),
 			slog.String("races", strings.Join(unmatched, ", ")))
 	}
-	return nil
+	if len(stale) > 0 {
+		errs = append(errs, fmt.Errorf("%d race(s) finished more than %s ago but have no matching F1.com result page: %s",
+			len(stale), staleAfter, strings.Join(stale, ", ")))
+	}
+
+	return errors.Join(errs...)
+}
+
+func isStaleRace(race *Race, now time.Time) bool {
+	if race.RaceStartDate.IsZero() && race.RaceEndDate.IsZero() {
+		return false
+	}
+	ref := race.RaceEndDate
+	if ref.IsZero() || ref.Before(race.RaceStartDate) {
+		ref = race.RaceStartDate.AddDate(0, 0, defaultWeekendDays)
+	}
+	return now.Sub(ref) > staleAfter
+}
+
+// summarizeDiscovered gives a compact "slug@date,slug@date" view for logs.
+func summarizeDiscovered(discovered []discoveredRace) string {
+	parts := make([]string, 0, len(discovered))
+	for _, d := range discovered {
+		parts = append(parts, d.slug+"@"+d.date)
+	}
+	return strings.Join(parts, ",")
 }
 
 func (s *ScrapedRaceResultService) discoverRaceResults(ctx context.Context, year string) ([]discoveredRace, error) {
+	yearInt, err := strconv.Atoi(strings.TrimSpace(year))
+	if err != nil {
+		return nil, fmt.Errorf("invalid season year %q: %w", year, err)
+	}
+
 	indexUrl := s.baseUrl + "/en/results/" + year + "/races"
-	doc, err := s.fetchDocument(ctx, indexUrl)
+	doc, err := s.fetcher.fetchDocument(ctx, indexUrl)
 	if err != nil {
 		return nil, err
 	}
 
 	var results []discoveredRace
+	undated := 0
 	doc.Find("table tbody tr").Each(func(i int, row *goquery.Selection) {
 		cells := row.Find("td")
 		if cells.Length() < 2 {
@@ -158,115 +210,40 @@ func (s *ScrapedRaceResultService) discoverRaceResults(ctx context.Context, year
 		if !strings.HasPrefix(href, "http") {
 			href = s.baseUrl + href
 		}
+
 		slug := ""
 		if m := raceResultUrlPattern.FindStringSubmatch(href); len(m) > 1 {
 			slug = m[1]
 		}
 
 		dateText := strings.TrimSpace(cells.Eq(1).Text())
-		re := regexp.MustCompile(`(\d{2}\s+[A-Za-z]{3})`)
-		if match := re.FindString(dateText); match != "" {
-			dateText = match
+		raceDate, ok := parseIndexDate(dateText, yearInt)
+		if !ok {
+			undated++
 		}
 
 		results = append(results, discoveredRace{
-			name: strings.TrimSpace(cells.Eq(0).Text()),
-			slug: slug,
-			date: dateText,
-			url:  href,
+			name:     strings.TrimSpace(cells.Eq(0).Text()),
+			slug:     slug,
+			date:     dateText,
+			raceDate: raceDate,
+			url:      href,
 		})
 	})
+
+	if len(results) == 0 {
+		return nil, fmt.Errorf("no race rows found at %s - page layout may have changed", indexUrl)
+	}
+	s.logger.Info("Discovered F1.com race result pages",
+		slog.Int("count", len(results)),
+		slog.Int("undated", undated))
 	return results, nil
-}
-
-func matchRace(discovered []discoveredRace, race *Race) (discoveredRace, bool) {
-	if match, ok := matchByDate(discovered, race.RaceStartDate); ok {
-		return match, true
-	}
-	return matchByName(discovered, race.Name)
-}
-
-func matchByDate(discovered []discoveredRace, raceDate time.Time) (discoveredRace, bool) {
-	if raceDate.IsZero() {
-		return discoveredRace{}, false
-	}
-	for _, d := range discovered {
-		parsed, err := time.Parse("02 Jan", d.date)
-		if err != nil {
-			continue
-		}
-		if parsed.Day() == raceDate.Day() && parsed.Month() == raceDate.Month() {
-			return d, true
-		}
-	}
-	return discoveredRace{}, false
-}
-
-func matchByName(discovered []discoveredRace, raceName string) (discoveredRace, bool) {
-	target := normalizeRaceName(raceName)
-	if target == "" {
-		return discoveredRace{}, false
-	}
-	for _, d := range discovered {
-		if d.slug == "" {
-			continue
-		}
-		slugNormalized := strings.ReplaceAll(d.slug, "-", "")
-
-		slugKey := slugNormalized
-		if slugKey == "greatbritain" {
-			slugKey = "british"
-		} else if slugKey == "belgium" {
-			slugKey = "belgian"
-		} else if slugKey == "hungary" {
-			slugKey = "hungarian"
-		}
-
-		if strings.Contains(target, slugNormalized) || strings.Contains(target, slugKey) {
-			return d, true
-		}
-	}
-	return discoveredRace{}, false
-}
-
-func normalizeRaceName(s string) string {
-	s = strings.ToLower(s)
-	re := regexp.MustCompile(`\b20\d{2}\b`)
-	s = re.ReplaceAllString(s, "")
-
-	replacer := strings.NewReplacer("grand prix", "", "gp", "", "-", "", " ", "", "'", "")
-	return strings.TrimSpace(replacer.Replace(s))
-}
-
-func (s *ScrapedRaceResultService) fetchDocument(ctx context.Context, url string) (*goquery.Document, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
-	if err != nil {
-		return nil, err
-	}
-	req.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36")
-	req.Header.Set("Accept", "text/html,application/xhtml+xml")
-
-	resp, err := s.httpClient.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("request to %s failed: %w", url, err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("unexpected status %d from %s", resp.StatusCode, url)
-	}
-
-	doc, err := goquery.NewDocumentFromReader(resp.Body)
-	if err != nil {
-		return nil, fmt.Errorf("failed to parse html from %s: %w", url, err)
-	}
-	return doc, nil
 }
 
 func (s *ScrapedRaceResultService) ScrapeAndPersistRaceResult(ctx context.Context, resultUrl string, season *Season, race *Race) error {
 	s.logger.Info("Scraping results", slog.String("url", resultUrl))
 
-	doc, err := s.fetchDocument(ctx, resultUrl)
+	doc, err := s.fetcher.fetchDocument(ctx, resultUrl)
 	if err != nil {
 		return err
 	}
@@ -276,66 +253,94 @@ func (s *ScrapedRaceResultService) ScrapeAndPersistRaceResult(ctx context.Contex
 		return fmt.Errorf("no result rows found at %s - page layout may have changed", resultUrl)
 	}
 
+	// The whole race is one transaction: either every driver's result is saved
+	// or none is, so a race is never left half-recorded (a race with any saved
+	// row would otherwise no longer count as "missing results").
 	return s.txManager.WithTx(ctx, func(txCtx context.Context) error {
-		var saved, skipped int
-		rows.Each(func(i int, row *goquery.Selection) {
-			ok, reason := s.parseAndSaveRow(txCtx, row, race, season)
-			if ok {
-				saved++
-				return
+		var saved, existing, skipped int
+		var rowErr error
+
+		rows.EachWithBreak(func(i int, row *goquery.Selection) bool {
+			outcome, reason, err := s.parseAndSaveRow(txCtx, row, race, season)
+			if err != nil {
+				rowErr = fmt.Errorf("row %d: %w", i, err)
+				return false
 			}
-			skipped++
-			s.logger.Warn("Skipped result row",
-				slog.String("race", race.Name),
-				slog.Int("row", i),
-				slog.String("reason", reason))
+			switch outcome {
+			case rowSaved:
+				saved++
+			case rowExisting:
+				existing++
+			default:
+				skipped++
+				s.logger.Warn("Skipped result row",
+					slog.String("race", race.Name),
+					slog.Int("row", i),
+					slog.String("reason", reason))
+			}
+			return true
 		})
+		if rowErr != nil {
+			return rowErr
+		}
 
 		s.logger.Info("Finished scraping race",
 			slog.String("race", race.Name),
 			slog.Int("saved", saved),
+			slog.Int("already_recorded", existing),
 			slog.Int("skipped", skipped))
 
-		if saved == 0 {
+		if saved+existing == 0 {
 			return fmt.Errorf("parsed 0 results for race %s at %s - page layout may have changed", race.Name, resultUrl)
 		}
 		return nil
 	})
 }
 
-func (s *ScrapedRaceResultService) parseAndSaveRow(ctx context.Context, row *goquery.Selection, race *Race, season *Season) (bool, string) {
+type rowOutcome int
+
+const (
+	rowSaved rowOutcome = iota
+	rowExisting
+	rowSkipped
+)
+
+// parseAndSaveRow returns an outcome (+reason) for rows that are fine or
+// deliberately skipped (header/odd rows), and a non-nil error for anything that
+// should abort and roll back the whole race: database failures, unparseable
+// points, and a driver code that doesn't exist in our drivers table.
+func (s *ScrapedRaceResultService) parseAndSaveRow(ctx context.Context, row *goquery.Selection, race *Race, season *Season) (rowOutcome, string, error) {
 	cells := row.Find("td")
 	if cells.Length() < 7 {
-		return false, fmt.Sprintf("expected at least 7 cells, got %d", cells.Length())
+		return rowSkipped, fmt.Sprintf("expected at least 7 cells, got %d", cells.Length()), nil
 	}
 
 	position := strings.TrimSpace(cells.Eq(0).Text())
 
 	driverCode := extractDriverCode(cells.Eq(2))
 	if driverCode == "" {
-		return false, fmt.Sprintf("could not extract driver code from %q", strings.TrimSpace(cells.Eq(2).Text()))
+		return rowSkipped, fmt.Sprintf("could not extract driver code from %q", strings.TrimSpace(cells.Eq(2).Text())), nil
 	}
 
 	driver, err := s.driverRepository.FindByDriverCode(ctx, driverCode)
 	if err != nil {
-		return false, fmt.Sprintf("driver lookup failed for code %q: %v", driverCode, err)
+		return rowSkipped, "", fmt.Errorf("driver lookup failed for code %q: %w", driverCode, err)
 	}
 	if driver == nil {
-		return false, fmt.Sprintf("no driver found for code %q", driverCode)
+		return rowSkipped, "", fmt.Errorf("no driver in the database with driver_code %q (fix the drivers table; the race will be retried next run)", driverCode)
 	}
 
 	exists, err := s.driverRaceResultRepository.ExistsByDriverAndRaceAndSeason(ctx, driver, race, season)
 	if err != nil {
-		return false, fmt.Sprintf("existence check failed for driver %q: %v", driverCode, err)
+		return rowSkipped, "", fmt.Errorf("existence check failed for driver %q: %w", driverCode, err)
 	}
 	if exists {
-		return false, fmt.Sprintf("result already recorded for driver %q", driverCode)
+		return rowExisting, fmt.Sprintf("result already recorded for driver %q", driverCode), nil
 	}
 
-	pointsText := strings.TrimSpace(cells.Eq(6).Text())
-	points, err := strconv.ParseFloat(pointsText, 64)
+	points, err := parsePoints(cells.Eq(6).Text())
 	if err != nil {
-		points = 0
+		return rowSkipped, "", fmt.Errorf("unparseable points for driver %q (layout change?): %w", driverCode, err)
 	}
 
 	lapsCompleted, _ := strconv.Atoi(strings.TrimSpace(cells.Eq(4).Text()))
@@ -357,10 +362,21 @@ func (s *ScrapedRaceResultService) parseAndSaveRow(ctx context.Context, row *goq
 	}
 
 	if err := s.driverRaceResultRepository.Save(ctx, res); err != nil {
-		return false, fmt.Sprintf("save failed for driver %q: %v", driverCode, err)
+		return rowSkipped, "", fmt.Errorf("save failed for driver %q: %w", driverCode, err)
 	}
 
-	return true, ""
+	return rowSaved, "", nil
+}
+
+// parsePoints treats empty / dash cells as 0 points but reports genuinely
+// unparseable text instead of silently recording 0.
+func parsePoints(raw string) (float64, error) {
+	text := strings.TrimSpace(raw)
+	switch text {
+	case "", "-", "–", "—":
+		return 0, nil
+	}
+	return strconv.ParseFloat(text, 64)
 }
 
 func extractDriverCode(cell *goquery.Selection) string {

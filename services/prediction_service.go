@@ -2,6 +2,7 @@ package services
 
 import (
 	"context"
+	"crypto/rand"
 	"errors"
 	"fmt"
 	"strings"
@@ -19,6 +20,9 @@ var (
 	ErrAccessDenied = errors.New("access denied")
 	ErrInvalidState = errors.New("invalid operation state")
 )
+
+// Repositories return (nil, nil) when nothing is found, so every call site
+// below checks both the error and the nil result before using the value.
 
 type PoolRepository interface {
 	FindByID(ctx context.Context, id uuid.UUID) (*models.Pool, error)
@@ -73,23 +77,32 @@ func NewPredictionService(
 	}
 }
 
+func teamIDStrings(teams []models.Team) []string {
+	ids := make([]string, len(teams))
+	for i, team := range teams {
+		ids[i] = team.ID.String()
+	}
+	return ids
+}
+
 func (s *PredictionService) GetPersonalTeamPrediction(ctx context.Context, userID uuid.UUID) (*response.SavedPredictionResponse, error) {
 	prediction, err := s.teamPredictionRepo.FindPersonalByUserId(ctx, userID)
 	if err != nil {
+		return nil, err
+	}
+	if prediction == nil {
 		return nil, fmt.Errorf("%w: no personal team prediction found for this user", ErrNotFound)
 	}
 
-	teamIDs := make([]string, len(prediction.PredictedTeams))
-	for i, team := range prediction.PredictedTeams {
-		teamIDs[i] = team.ID.String()
-	}
-
-	return &response.SavedPredictionResponse{PredictedTeams: teamIDs}, nil
+	return &response.SavedPredictionResponse{PredictedTeams: teamIDStrings(prediction.PredictedTeams)}, nil
 }
 
 func (s *PredictionService) GetPoolTeamPrediction(ctx context.Context, userID, poolID uuid.UUID) (*response.SavedPredictionResponse, error) {
 	pool, err := s.poolRepo.FindByID(ctx, poolID)
 	if err != nil {
+		return nil, err
+	}
+	if pool == nil {
 		return nil, fmt.Errorf("%w: pool not found", ErrNotFound)
 	}
 
@@ -99,15 +112,13 @@ func (s *PredictionService) GetPoolTeamPrediction(ctx context.Context, userID, p
 
 	prediction, err := s.teamPredictionRepo.FindByUserIdAndPoolId(ctx, userID, poolID)
 	if err != nil {
+		return nil, err
+	}
+	if prediction == nil {
 		return nil, fmt.Errorf("%w: no team prediction found for this pool", ErrNotFound)
 	}
 
-	teamIDs := make([]string, len(prediction.PredictedTeams))
-	for i, team := range prediction.PredictedTeams {
-		teamIDs[i] = team.ID.String()
-	}
-
-	return &response.SavedPredictionResponse{PredictedTeams: teamIDs}, nil
+	return &response.SavedPredictionResponse{PredictedTeams: teamIDStrings(prediction.PredictedTeams)}, nil
 }
 
 func (s *PredictionService) CreateTeamPrediction(ctx context.Context, userID uuid.UUID, req *requests.CreateSeasonPredictionRequest) error {
@@ -117,6 +128,9 @@ func (s *PredictionService) CreateTeamPrediction(ctx context.Context, userID uui
 			var err error
 			pool, err = s.poolRepo.FindByID(txCtx, *req.PoolID)
 			if err != nil {
+				return err
+			}
+			if pool == nil {
 				return fmt.Errorf("%w: pool not found", ErrNotFound)
 			}
 			if !pool.IsMember(userID) {
@@ -133,8 +147,10 @@ func (s *PredictionService) CreateTeamPrediction(ctx context.Context, userID uui
 		} else {
 			existing, err = s.teamPredictionRepo.FindByUserIdAndPoolId(txCtx, userID, *req.PoolID)
 		}
-
-		if err == nil && existing != nil {
+		if err != nil {
+			return err
+		}
+		if existing != nil {
 			return fmt.Errorf("%w: you have already submitted a prediction for this context", ErrInvalidState)
 		}
 
@@ -150,13 +166,19 @@ func (s *PredictionService) CreateTeamPrediction(ctx context.Context, userID uui
 
 		orderedTeams := make([]models.Team, 0, len(req.PredictedTeams))
 		for _, id := range req.PredictedTeams {
-			if team, ok := teamMap[id]; ok && team != nil {
-				orderedTeams = append(orderedTeams, *team)
+			team, ok := teamMap[id]
+			if !ok || team == nil {
+				// Unknown ids used to be dropped silently, saving a shorter prediction.
+				return fmt.Errorf("%w: team %s does not exist", ErrNotFound, id)
 			}
+			orderedTeams = append(orderedTeams, *team)
 		}
 
 		user, err := s.userRepo.FindByID(txCtx, userID)
-		if err != nil || user == nil {
+		if err != nil {
+			return err
+		}
+		if user == nil {
 			return fmt.Errorf("%w: user not found", ErrNotFound)
 		}
 
@@ -180,20 +202,23 @@ func (s *PredictionService) GetUserPools(ctx context.Context, userID uuid.UUID) 
 		return nil, err
 	}
 
-	responses := make([]*response.PoolSummaryResponse, len(pools))
-	for i, pool := range pools {
+	responses := make([]*response.PoolSummaryResponse, 0, len(pools))
+	for _, pool := range pools {
+		if pool == nil {
+			continue
+		}
 		creatorID := uuid.Nil
 		if pool.Creator != nil {
 			creatorID = pool.Creator.ID
 		}
 
-		responses[i] = &response.PoolSummaryResponse{
+		responses = append(responses, &response.PoolSummaryResponse{
 			ID:          pool.ID,
 			Name:        pool.Name,
 			MemberCount: len(pool.Members),
 			CreatorID:   creatorID,
 			InviteCode:  pool.InviteCode,
-		}
+		})
 	}
 
 	return responses, nil
@@ -202,6 +227,9 @@ func (s *PredictionService) GetUserPools(ctx context.Context, userID uuid.UUID) 
 func (s *PredictionService) GetPoolDetails(ctx context.Context, userID, poolID uuid.UUID) (*response.PoolDetailsResponse, error) {
 	pool, err := s.poolRepo.FindByID(ctx, poolID)
 	if err != nil {
+		return nil, err
+	}
+	if pool == nil {
 		return nil, fmt.Errorf("%w: pool not found", ErrNotFound)
 	}
 
@@ -216,23 +244,21 @@ func (s *PredictionService) GetPoolDetails(ctx context.Context, userID, poolID u
 
 	predMap := make(map[uuid.UUID]*models.TeamPrediction, len(predictions))
 	for _, p := range predictions {
-		predMap[p.User.ID] = p
+		if p != nil {
+			predMap[p.User.ID] = p
+		}
 	}
 
-	leaderBoard := make([]response.MemberPredictionDTO, len(pool.Members))
-	for i, member := range pool.Members {
+	// append instead of indexing: nil members used to leave blank entries with a nil UUID.
+	leaderBoard := make([]response.MemberPredictionDTO, 0, len(pool.Members))
+	for _, member := range pool.Members {
 		if member == nil {
 			continue
 		}
 
-		var predictedTeamIDs []string
+		predictedTeamIDs := []string{}
 		if pred, ok := predMap[member.ID]; ok {
-			predictedTeamIDs = make([]string, len(pred.PredictedTeams))
-			for j, team := range pred.PredictedTeams {
-				predictedTeamIDs[j] = team.ID.String()
-			}
-		} else {
-			predictedTeamIDs = []string{}
+			predictedTeamIDs = teamIDStrings(pred.PredictedTeams)
 		}
 
 		userName := ""
@@ -245,12 +271,12 @@ func (s *PredictionService) GetPoolDetails(ctx context.Context, userID, poolID u
 			userPicture = *member.Picture
 		}
 
-		leaderBoard[i] = response.MemberPredictionDTO{
+		leaderBoard = append(leaderBoard, response.MemberPredictionDTO{
 			UserID:           member.ID,
 			Username:         userName,
 			Picture:          userPicture,
 			PredictedTeamIDs: predictedTeamIDs,
-		}
+		})
 	}
 
 	creatorID := uuid.Nil
@@ -272,7 +298,10 @@ func (s *PredictionService) GetPredictionStatus(ctx context.Context, userID uuid
 		return nil, err
 	}
 
-	personal, _ := s.teamPredictionRepo.FindPersonalByUserId(ctx, userID)
+	personal, err := s.teamPredictionRepo.FindPersonalByUserId(ctx, userID)
+	if err != nil {
+		return nil, err
+	}
 
 	return &response.PredictionStatusResponse{
 		HasPools:              len(pools) > 0,
@@ -280,17 +309,52 @@ func (s *PredictionService) GetPredictionStatus(ctx context.Context, userID uuid
 	}, nil
 }
 
+// inviteAlphabet has 32 characters (no 0/O/1/I), so a random byte maps onto it
+// without modulo bias. Codes are 8 characters: 32^8 ≈ 10^12 combinations.
+const inviteAlphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
+
+func generateInviteCode() (string, error) {
+	b := make([]byte, 8)
+	if _, err := rand.Read(b); err != nil {
+		return "", fmt.Errorf("failed to generate invite code: %w", err)
+	}
+	for i := range b {
+		b[i] = inviteAlphabet[int(b[i])%len(inviteAlphabet)]
+	}
+	return string(b), nil
+}
+
 func (s *PredictionService) CreatePool(ctx context.Context, userID uuid.UUID, req *requests.CreatePoolRequest) (*models.Pool, error) {
 	var created *models.Pool
 	err := s.txManager.WithTx(ctx, func(txCtx context.Context) error {
 		user, err := s.userRepo.FindByID(txCtx, userID)
 		if err != nil {
+			return err
+		}
+		if user == nil {
 			return fmt.Errorf("%w: user not found", ErrNotFound)
 		}
 
-		inviteCode := strings.ToUpper(uuid.New().String()[:8])
-		now := time.Now()
+		var inviteCode string
+		for attempt := 0; attempt < 5; attempt++ {
+			code, err := generateInviteCode()
+			if err != nil {
+				return err
+			}
+			clash, err := s.poolRepo.FindByInviteCode(txCtx, code)
+			if err != nil {
+				return err
+			}
+			if clash == nil {
+				inviteCode = code
+				break
+			}
+		}
+		if inviteCode == "" {
+			return errors.New("could not generate a unique invite code")
+		}
 
+		now := time.Now()
 		pool := &models.Pool{
 			ID:         uuid.New(),
 			Name:       req.Name,
@@ -316,6 +380,9 @@ func (s *PredictionService) LeaveOrDeletePool(ctx context.Context, userID, poolI
 	return s.txManager.WithTx(ctx, func(txCtx context.Context) error {
 		pool, err := s.poolRepo.FindByID(txCtx, poolID)
 		if err != nil {
+			return err
+		}
+		if pool == nil {
 			return fmt.Errorf("%w: pool not found", ErrNotFound)
 		}
 
@@ -323,7 +390,8 @@ func (s *PredictionService) LeaveOrDeletePool(ctx context.Context, userID, poolI
 			return fmt.Errorf("%w: you are not a member of this pool", ErrInvalidState)
 		}
 
-		if pool.Creator != nil && pool.Creator.ID == userID || len(pool.Members) <= 1 {
+		isCreator := pool.Creator != nil && pool.Creator.ID == userID
+		if isCreator || len(pool.Members) <= 1 {
 			if err := s.teamPredictionRepo.DeleteByPoolId(txCtx, poolID); err != nil {
 				return err
 			}
@@ -332,7 +400,11 @@ func (s *PredictionService) LeaveOrDeletePool(ctx context.Context, userID, poolI
 
 		pool.RemoveMember(userID)
 
-		if pred, err := s.teamPredictionRepo.FindByUserIdAndPoolId(txCtx, userID, poolID); err == nil && pred != nil {
+		pred, err := s.teamPredictionRepo.FindByUserIdAndPoolId(txCtx, userID, poolID)
+		if err != nil {
+			return err
+		}
+		if pred != nil {
 			if err := s.teamPredictionRepo.Delete(txCtx, pred); err != nil {
 				return err
 			}
@@ -347,10 +419,14 @@ func (s *PredictionService) KickMemberOrDeletePool(ctx context.Context, adminID,
 	return s.txManager.WithTx(ctx, func(txCtx context.Context) error {
 		pool, err := s.poolRepo.FindByID(txCtx, poolID)
 		if err != nil {
+			return err
+		}
+		if pool == nil {
 			return fmt.Errorf("%w: pool not found", ErrNotFound)
 		}
 
-		if pool.Creator != nil && pool.Creator.ID != adminID {
+		// A pool without a creator used to pass this check for anyone, including non-members.
+		if pool.Creator == nil || pool.Creator.ID != adminID {
 			return fmt.Errorf("%w: only the pool creator can remove members", ErrAccessDenied)
 		}
 
@@ -365,7 +441,11 @@ func (s *PredictionService) KickMemberOrDeletePool(ctx context.Context, adminID,
 			return fmt.Errorf("%w: target user is not a member of this pool", ErrNotFound)
 		}
 
-		if pred, err := s.teamPredictionRepo.FindByUserIdAndPoolId(txCtx, memberID, poolID); err == nil && pred != nil {
+		pred, err := s.teamPredictionRepo.FindByUserIdAndPoolId(txCtx, memberID, poolID)
+		if err != nil {
+			return err
+		}
+		if pred != nil {
 			if err := s.teamPredictionRepo.Delete(txCtx, pred); err != nil {
 				return err
 			}
@@ -378,13 +458,19 @@ func (s *PredictionService) KickMemberOrDeletePool(ctx context.Context, adminID,
 
 func (s *PredictionService) JoinPool(ctx context.Context, userID uuid.UUID, req *requests.JoinPoolRequest) error {
 	return s.txManager.WithTx(ctx, func(txCtx context.Context) error {
-		pool, err := s.poolRepo.FindByInviteCode(txCtx, strings.ToUpper(req.InviteCode))
+		pool, err := s.poolRepo.FindByInviteCode(txCtx, strings.ToUpper(strings.TrimSpace(req.InviteCode)))
 		if err != nil {
+			return err
+		}
+		if pool == nil {
 			return fmt.Errorf("%w: invalid invite code", ErrNotFound)
 		}
 
 		user, err := s.userRepo.FindByID(txCtx, userID)
 		if err != nil {
+			return err
+		}
+		if user == nil {
 			return fmt.Errorf("%w: user not found", ErrNotFound)
 		}
 
@@ -398,6 +484,8 @@ func (s *PredictionService) JoinPool(ctx context.Context, userID uuid.UUID, req 
 	})
 }
 
+// CreatePrediction is still a stub. It used to return nil, telling the client
+// the prediction was saved when nothing was stored.
 func (s *PredictionService) CreatePrediction(ctx context.Context, id uuid.UUID, req *requests.CreatePredictionRequest) error {
-	return nil
+	return fmt.Errorf("%w: race predictions are not implemented yet", ErrInvalidState)
 }

@@ -2,7 +2,6 @@ package services
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"time"
 
@@ -33,9 +32,12 @@ func NewDriverService(
 }
 
 func (s *DriverService) GetDriverById(ctx context.Context, id uuid.UUID) (*response.DriverWithSeasonsResponse, error) {
-	driver, err := s.driverRepository.FindByID(id)
-	if err != nil || driver == nil {
-		return nil, fmt.Errorf("driver not found")
+	driver, err := s.driverRepository.FindByID(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	if driver == nil {
+		return nil, fmt.Errorf("%w: driver not found", ErrNotFound)
 	}
 
 	res := mapDriverToWithSeasonsResponse(driver)
@@ -43,9 +45,13 @@ func (s *DriverService) GetDriverById(ctx context.Context, id uuid.UUID) (*respo
 }
 
 func (s *DriverService) GetDriversByLastName(ctx context.Context, lastName string) (*response.DriverResponse, error) {
-	driver, err := s.driverRepository.FindByLastNameIgnoreCase(lastName)
-	if err != nil || driver == nil {
+	driver, err := s.driverRepository.FindByLastNameIgnoreCase(ctx, lastName)
+	if err != nil {
 		return nil, err
+	}
+	if driver == nil {
+		// Previously this returned (nil, nil), which handlers then dereferenced.
+		return nil, fmt.Errorf("%w: no driver with last name %q", ErrNotFound, lastName)
 	}
 
 	res := mapDriverToResponse(driver)
@@ -53,27 +59,32 @@ func (s *DriverService) GetDriversByLastName(ctx context.Context, lastName strin
 }
 
 func (s *DriverService) GetDriverCareerHistory(ctx context.Context, name string) ([]response.DriverWithSeasonsResponse, error) {
-	drivers, err := s.driverRepository.FindCareerHistoryByLastNameIgnoreCase(name)
+	drivers, err := s.driverRepository.FindCareerHistoryByLastNameIgnoreCase(ctx, name)
 	if err != nil {
 		return nil, err
 	}
 
-	var res []response.DriverWithSeasonsResponse
-	for _, d := range drivers {
-		res = append(res, mapDriverToWithSeasonsResponse(&d))
+	res := make([]response.DriverWithSeasonsResponse, 0, len(drivers))
+	for i := range drivers {
+		res = append(res, mapDriverToWithSeasonsResponse(&drivers[i]))
 	}
 	return res, nil
 }
 
+// mapDriverToResponse copies values before taking their address. Taking the
+// address of a field of a loop variable (as the callers used to) makes every
+// response share one pointer on Go < 1.22, so all drivers showed the same number.
 func mapDriverToResponse(d *models.Driver) response.DriverResponse {
 	var permNum *int
 	if d.PermanentNumber != 0 {
-		permNum = &d.PermanentNumber
+		n := d.PermanentNumber
+		permNum = &n
 	}
 
 	var updatedAt *time.Time
 	if !d.UpdatedAt.IsZero() {
-		updatedAt = &d.UpdatedAt
+		u := d.UpdatedAt
+		updatedAt = &u
 	}
 
 	return response.DriverResponse{
@@ -92,7 +103,8 @@ func mapDriverToResponse(d *models.Driver) response.DriverResponse {
 func mapDriverToWithSeasonsResponse(d *models.Driver) response.DriverWithSeasonsResponse {
 	var permNum *int
 	if d.PermanentNumber != 0 {
-		permNum = &d.PermanentNumber
+		n := d.PermanentNumber
+		permNum = &n
 	}
 
 	var teamSeasons []response.TeamSeasonResponse
@@ -130,43 +142,34 @@ func mapDriverToWithSeasonsResponse(d *models.Driver) response.DriverWithSeasons
 func (s *DriverService) GetDriversBySeason(ctx context.Context, season string) ([]response.DriverWithSeasonsResponse, error) {
 	cacheKey := fmt.Sprintf("drivers::season:%s", season)
 
-	if s.cacheEnabled && s.redisClient != nil {
-		if cachedData, err := s.redisClient.Get(ctx, cacheKey).Bytes(); err == nil {
-			var cachedResp []response.DriverWithSeasonsResponse
-			if err := json.Unmarshal(cachedData, &cachedResp); err == nil {
-				return cachedResp, nil
-			}
-		}
+	var cached []response.DriverWithSeasonsResponse
+	if cacheGetJSON(ctx, s.redisClient, s.cacheEnabled, cacheKey, &cached) {
+		return cached, nil
 	}
 
-	drivers, err := s.driverRepository.FindAllBySeasonName(season)
+	drivers, err := s.driverRepository.FindAllBySeasonName(ctx, season)
 	if err != nil {
 		return nil, err
 	}
 
-	var res []response.DriverWithSeasonsResponse
-	for _, d := range drivers {
-		res = append(res, mapDriverToWithSeasonsResponse(&d))
+	res := make([]response.DriverWithSeasonsResponse, 0, len(drivers))
+	for i := range drivers {
+		res = append(res, mapDriverToWithSeasonsResponse(&drivers[i]))
 	}
 
-	if s.cacheEnabled && s.redisClient != nil {
-		if bytes, err := json.Marshal(res); err == nil {
-			s.redisClient.Set(ctx, cacheKey, bytes, 0)
-		}
-	}
-
+	cacheSetJSON(ctx, s.redisClient, s.cacheEnabled, cacheKey, res)
 	return res, nil
 }
 
 func (s *DriverService) GetDriversByPermanentNumber(ctx context.Context, permNum int) ([]response.DriverResponse, error) {
-	drivers, err := s.driverRepository.FindByPermanentNumber(permNum)
+	drivers, err := s.driverRepository.FindByPermanentNumber(ctx, permNum)
 	if err != nil {
 		return nil, err
 	}
 
-	var res []response.DriverResponse
-	for _, d := range drivers {
-		res = append(res, mapDriverToResponse(&d))
+	res := make([]response.DriverResponse, 0, len(drivers))
+	for i := range drivers {
+		res = append(res, mapDriverToResponse(&drivers[i]))
 	}
 	return res, nil
 }
@@ -174,30 +177,21 @@ func (s *DriverService) GetDriversByPermanentNumber(ctx context.Context, permNum
 func (s *DriverService) GetAllDrivers(ctx context.Context) ([]response.DriverResponse, error) {
 	cacheKey := "drivers::all"
 
-	if s.cacheEnabled && s.redisClient != nil {
-		if cachedData, err := s.redisClient.Get(ctx, cacheKey).Bytes(); err == nil {
-			var cachedResp []response.DriverResponse
-			if err := json.Unmarshal(cachedData, &cachedResp); err == nil {
-				return cachedResp, nil
-			}
-		}
+	var cached []response.DriverResponse
+	if cacheGetJSON(ctx, s.redisClient, s.cacheEnabled, cacheKey, &cached) {
+		return cached, nil
 	}
 
-	drivers, err := s.driverRepository.FindAll()
+	drivers, err := s.driverRepository.FindAll(ctx)
 	if err != nil {
 		return nil, err
 	}
 
-	var res []response.DriverResponse
-	for _, d := range drivers {
-		res = append(res, mapDriverToResponse(&d))
+	res := make([]response.DriverResponse, 0, len(drivers))
+	for i := range drivers {
+		res = append(res, mapDriverToResponse(&drivers[i]))
 	}
 
-	if s.cacheEnabled && s.redisClient != nil {
-		if bytes, err := json.Marshal(res); err == nil {
-			s.redisClient.Set(ctx, cacheKey, bytes, 0)
-		}
-	}
-
+	cacheSetJSON(ctx, s.redisClient, s.cacheEnabled, cacheKey, res)
 	return res, nil
 }

@@ -2,9 +2,9 @@ package scrapers
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
-	"net/http"
 	"strconv"
 	"strings"
 	"time"
@@ -24,12 +24,11 @@ const (
 	driverCountrySelector   = `p:nth-child(2)`
 	driverTeamSelector      = `p:nth-child(3)`
 	driverNumberSelector    = `p:nth-child(5)`
-	driverUserAgent         = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/58.0.3029.110 Safari/537.36"
 )
 
 type ScrapedDriverService struct {
 	driverRepository DriverRepository
-	httpClient       *http.Client
+	fetcher          *pageFetcher
 	logger           *slog.Logger
 }
 
@@ -39,31 +38,9 @@ func NewScrapedDriverService(repo DriverRepository, logger *slog.Logger) *Scrape
 	}
 	return &ScrapedDriverService{
 		driverRepository: repo,
-		httpClient: &http.Client{
-			Timeout: 15 * time.Second,
-		},
-		logger: logger,
+		fetcher:          newPageFetcher(15*time.Second, logger),
+		logger:           logger,
 	}
-}
-
-func (s *ScrapedDriverService) fetchDocument(ctx context.Context, url string) (*goquery.Document, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
-	if err != nil {
-		return nil, err
-	}
-	req.Header.Set("User-Agent", driverUserAgent)
-
-	resp, err := s.httpClient.Do(req)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("http request failed with status: %d", resp.StatusCode)
-	}
-
-	return goquery.NewDocumentFromReader(resp.Body)
 }
 
 func (s *ScrapedDriverService) ScrapeF1Drivers(ctx context.Context) ([]*models.Driver, error) {
@@ -71,7 +48,7 @@ func (s *ScrapedDriverService) ScrapeF1Drivers(ctx context.Context) ([]*models.D
 	var drivers []*models.Driver
 	s.logger.Info("Starting scrape of F1 drivers.")
 
-	doc, err := s.fetchDocument(ctx, "https://www.formula1.com/en/drivers")
+	doc, err := s.fetcher.fetchDocument(ctx, "https://www.formula1.com/en/drivers")
 	if err != nil {
 		s.logger.Error("Error loading F1 drivers page", slog.String("error", err.Error()))
 		return nil, err
@@ -79,7 +56,11 @@ func (s *ScrapedDriverService) ScrapeF1Drivers(ctx context.Context) ([]*models.D
 
 	cards := doc.Find(driverCardSelector)
 	s.logger.Info("Found driver cards to process.", slog.Int("count", cards.Length()))
+	if cards.Length() == 0 {
+		return nil, errors.New("no driver cards found on F1.com drivers page - page layout may have changed")
+	}
 
+	failed := 0
 	cards.Each(func(i int, card *goquery.Selection) {
 		href, exists := card.Attr("href")
 		if !exists {
@@ -87,14 +68,21 @@ func (s *ScrapedDriverService) ScrapeF1Drivers(ctx context.Context) ([]*models.D
 		}
 
 		driverPageURL := "https://www.formula1.com" + href
-		driverDoc, err := s.fetchDocument(ctx, driverPageURL)
+		driverDoc, err := s.fetcher.fetchDocument(ctx, driverPageURL)
 		if err != nil {
-			s.logger.Warn("Could not parse driver card.", slog.String("url", driverPageURL), slog.String("error", err.Error()))
+			failed++
+			s.logger.Warn("Could not load driver page.", slog.String("url", driverPageURL), slog.String("error", err.Error()))
 			return
 		}
 
 		firstName := strings.TrimSpace(driverDoc.Find(driverFirstNameSelector).First().Text())
 		lastName := strings.TrimSpace(driverDoc.Find(driverLastNameSelector).First().Text())
+		if firstName == "" || lastName == "" {
+			failed++
+			s.logger.Warn("Skipping driver page with missing name (selectors may be stale).",
+				slog.String("url", driverPageURL), slog.String("firstName", firstName), slog.String("lastName", lastName))
+			return
+		}
 
 		infoGroup := driverDoc.Find(driverInfoGroupSelector).First()
 		var country, teamName string
@@ -115,23 +103,20 @@ func (s *ScrapedDriverService) ScrapeF1Drivers(ctx context.Context) ([]*models.D
 			}
 		}
 
-		countryCode := getCountryCode(country)
-		birthdayParsed := s.parseBirthday(strings.TrimSpace(driverDoc.Find(driverBirthdaySelector).First().Text()))
 		var birthday time.Time
-		if birthdayParsed != nil {
-			birthday = *birthdayParsed
+		if parsed := s.parseBirthday(strings.TrimSpace(driverDoc.Find(driverBirthdaySelector).First().Text())); parsed != nil {
+			birthday = *parsed
 		}
-		driverCode := s.getDriverCode(lastName)
-		now := time.Now()
 
+		now := time.Now()
 		driver := &models.Driver{
 			Firstname:       firstName,
 			Lastname:        lastName,
 			PermanentNumber: permanentNumber,
-			DriverCode:      driverCode,
+			DriverCode:      s.getDriverCode(lastName),
 			Birthday:        birthday,
 			Country:         country,
-			CountryCode:     countryCode,
+			CountryCode:     getCountryCode(country),
 			Team:            teamName,
 		}
 		driver.ID = uuid.New()
@@ -142,8 +127,13 @@ func (s *ScrapedDriverService) ScrapeF1Drivers(ctx context.Context) ([]*models.D
 		s.logger.Debug("Successfully parsed driver", slog.String("name", firstName+" "+lastName))
 	})
 
+	if len(drivers) == 0 {
+		return nil, fmt.Errorf("no valid drivers parsed from %d cards - selectors may be stale", cards.Length())
+	}
+
 	s.logger.Info("Scraping for drivers completed.",
 		slog.Int("totalParsed", len(drivers)),
+		slog.Int("failed", failed),
 		slog.Duration("duration", time.Since(startTime)),
 	)
 
@@ -156,70 +146,94 @@ func (s *ScrapedDriverService) UpdateDriversFromScraper(ctx context.Context) err
 		return err
 	}
 
-	for _, scrapedDriver := range scrapedDrivers {
-		existing, err := s.driverRepository.FindByFirstNameAndLastNameIgnoreCase(scrapedDriver.Firstname, scrapedDriver.Lastname)
+	var errs []error
+	for _, scraped := range scrapedDrivers {
+		name := scraped.Firstname + " " + scraped.Lastname
 
-		if err != nil || existing == nil {
-			if err := s.driverRepository.Save(ctx, scrapedDriver); err != nil {
-				s.logger.Error("Failed to save new driver", slog.String("lastname", scrapedDriver.Lastname), slog.String("error", err.Error()))
+		existing, err := s.driverRepository.FindByFirstNameAndLastNameIgnoreCase(ctx, scraped.Firstname, scraped.Lastname)
+		if err != nil {
+			// A lookup error is not "not found": inserting here would create a duplicate.
+			s.logger.Error("Driver lookup failed", slog.String("name", name), slog.String("error", err.Error()))
+			errs = append(errs, fmt.Errorf("lookup %q: %w", name, err))
+			continue
+		}
+		if existing == nil && len(scraped.DriverCode) == 3 {
+			// Names can differ slightly between F1.com and our DB (accents, middle names);
+			// the code is a safer second key than creating a duplicate driver.
+			if existing, err = s.driverRepository.FindByDriverCode(ctx, scraped.DriverCode); err != nil {
+				s.logger.Error("Driver lookup by code failed", slog.String("code", scraped.DriverCode), slog.String("error", err.Error()))
+				errs = append(errs, fmt.Errorf("lookup code %q: %w", scraped.DriverCode, err))
 				continue
 			}
-			s.logger.Info("Saved new driver", slog.String("lastname", scrapedDriver.Lastname))
-		} else {
-			isDifferent := false
+		}
 
-			if existing.Firstname != scrapedDriver.Firstname {
-				existing.Firstname = scrapedDriver.Firstname
-				isDifferent = true
+		if existing == nil {
+			if err := s.driverRepository.Save(ctx, scraped); err != nil {
+				s.logger.Error("Failed to save new driver", slog.String("name", name), slog.String("error", err.Error()))
+				errs = append(errs, fmt.Errorf("save %q: %w", name, err))
+				continue
 			}
-			if existing.Lastname != scrapedDriver.Lastname {
-				existing.Lastname = scrapedDriver.Lastname
-				isDifferent = true
-			}
-			if (existing.Birthday.IsZero() && !scrapedDriver.Birthday.IsZero()) ||
-				(!existing.Birthday.IsZero() && scrapedDriver.Birthday.IsZero()) ||
-				(!existing.Birthday.IsZero() && !scrapedDriver.Birthday.IsZero() && !existing.Birthday.Equal(scrapedDriver.Birthday)) {
-				existing.Birthday = scrapedDriver.Birthday
-				isDifferent = true
-			}
-			if existing.Country != scrapedDriver.Country {
-				existing.Country = scrapedDriver.Country
-				isDifferent = true
-			}
-			if existing.Team != scrapedDriver.Team {
-				existing.Team = scrapedDriver.Team
-				isDifferent = true
-			}
+			s.logger.Info("Saved new driver", slog.String("name", name))
+			continue
+		}
 
-			if isDifferent {
-				existing.UpdatedAt = scrapedDriver.UpdatedAt
-				if err := s.driverRepository.Save(ctx, existing); err != nil {
-					s.logger.Error("Failed to update driver", slog.String("lastname", existing.Lastname), slog.String("error", err.Error()))
-					continue
-				}
-				s.logger.Info("Updated driver", slog.String("name", existing.Firstname+" "+existing.Lastname))
-			} else {
-				s.logger.Info("Driver data is the same, no update", slog.String("name", scrapedDriver.Firstname+" "+scrapedDriver.Lastname))
+		// Only overwrite with non-empty scraped values: a partial scrape must never blank out good data.
+		changed := false
+		setString := func(dst *string, value string) {
+			if value != "" && *dst != value {
+				*dst = value
+				changed = true
 			}
 		}
+		setString(&existing.Firstname, scraped.Firstname)
+		setString(&existing.Lastname, scraped.Lastname)
+		setString(&existing.Country, scraped.Country)
+		setString(&existing.CountryCode, scraped.CountryCode)
+		setString(&existing.Team, scraped.Team)
+		setString(&existing.DriverCode, scraped.DriverCode)
+		if scraped.PermanentNumber != 0 && existing.PermanentNumber != scraped.PermanentNumber {
+			existing.PermanentNumber = scraped.PermanentNumber
+			changed = true
+		}
+		if !scraped.Birthday.IsZero() && !existing.Birthday.Equal(scraped.Birthday) {
+			existing.Birthday = scraped.Birthday
+			changed = true
+		}
+
+		if !changed {
+			s.logger.Debug("Driver data is the same, no update", slog.String("name", name))
+			continue
+		}
+
+		existing.UpdatedAt = time.Now()
+		if err := s.driverRepository.Save(ctx, existing); err != nil {
+			s.logger.Error("Failed to update driver", slog.String("name", name), slog.String("error", err.Error()))
+			errs = append(errs, fmt.Errorf("update %q: %w", name, err))
+			continue
+		}
+		s.logger.Info("Updated driver", slog.String("name", name))
 	}
-	return nil
+	return errors.Join(errs...)
 }
 
 func (s *ScrapedDriverService) parseBirthday(dateStr string) *time.Time {
 	t, err := time.Parse("02/01/2006", dateStr)
 	if err != nil {
-		s.logger.Error("Failed to parse birthday", slog.String("dateStr", dateStr), slog.String("error", err.Error()))
+		s.logger.Warn("Failed to parse birthday", slog.String("dateStr", dateStr), slog.String("error", err.Error()))
 		return nil
 	}
 	return &t
 }
 
+// getDriverCode builds the 3-letter code from the surname with accents removed
+// and spaces dropped: "Pérez" -> PER, "Hülkenberg" -> HUL, "de Vries" -> DEV.
+// The old byte slice gave "PÉ" / "HÜ" / "DE ", which never matched F1.com's codes.
 func (s *ScrapedDriverService) getDriverCode(lastname string) string {
-	if len(lastname) < 3 {
+	folded := strings.ReplaceAll(normalizeText(lastname), " ", "")
+	if len(folded) < 3 {
 		return ""
 	}
-	return strings.ToUpper(lastname[:3])
+	return strings.ToUpper(folded[:3])
 }
 
 func getCountryCode(country string) string {

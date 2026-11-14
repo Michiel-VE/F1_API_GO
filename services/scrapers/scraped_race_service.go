@@ -2,9 +2,9 @@ package scrapers
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
-	"net/http"
 	"regexp"
 	"strconv"
 	"strings"
@@ -20,6 +20,11 @@ const (
 	nameSelector         = "span.typography-module_body-xs-semibold__Fyfwn"
 	dateSelector         = "span.typography-module_technical-m-bold__JDsxP"
 	dateFallbackSelector = "span.typography-module_technical-xs-regular__-W0Gs"
+)
+
+var (
+	crossMonthDatePattern = regexp.MustCompile(`(?P<startDay>\d{2}).*?(?P<startMonth>[a-zA-Z]{3}).*?(?P<endDay>\d{2}).*?(?P<endMonth>[a-zA-Z]{3})`)
+	sameMonthDatePattern  = regexp.MustCompile(`(?P<startDay>\d{2}).*?(?P<endDay>\d{2}).*?(?P<endMonth>[a-zA-Z]{3})`)
 )
 
 type RaceStatus struct {
@@ -51,7 +56,7 @@ type ScrapedRaceService struct {
 	raceStatusRepository RaceStatusRepository
 	raceSeasonRepository RaceSeasonRepository
 	txManager            TransactionManager
-	httpClient           *http.Client
+	fetcher              *pageFetcher
 	logger               *slog.Logger
 }
 
@@ -77,10 +82,8 @@ func NewScrapedRaceService(
 		raceStatusRepository: statusRepo,
 		raceSeasonRepository: raceSeasonRepo,
 		txManager:            txManager,
-		httpClient: &http.Client{
-			Timeout: 15 * time.Second,
-		},
-		logger: logger,
+		fetcher:              newPageFetcher(15*time.Second, logger),
+		logger:               logger,
 	}
 }
 
@@ -90,25 +93,15 @@ func (s *ScrapedRaceService) ScrapeF1Race(ctx context.Context, year string) ([]*
 	s.logger.Info("Starting scrape of F1 races", slog.String("year", year))
 
 	url := fmt.Sprintf("%s/en/racing/%s", s.baseUrl, year)
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
-	if err != nil {
-		return nil, err
-	}
-	req.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64)")
-
-	resp, err := s.httpClient.Do(req)
+	doc, err := s.fetcher.fetchDocument(ctx, url)
 	if err != nil {
 		s.logger.Error("Error loading F1 schedule", slog.String("year", year), slog.String("error", err.Error()))
 		return nil, err
 	}
-	defer resp.Body.Close()
 
-	doc, err := goquery.NewDocumentFromReader(resp.Body)
-	if err != nil {
-		return nil, err
-	}
-
-	doc.Find(raceCardSelector).Each(func(i int, card *goquery.Selection) {
+	cards := doc.Find(raceCardSelector)
+	skipped := 0
+	cards.Each(func(i int, card *goquery.Selection) {
 		description := s.safeSelectText(card, descriptionSelector)
 		raceName := s.safeSelectText(card, nameSelector)
 		dateText := s.safeSelectText(card, dateSelector)
@@ -116,24 +109,35 @@ func (s *ScrapedRaceService) ScrapeF1Race(ctx context.Context, year string) ([]*
 			dateText = s.safeSelectText(card, dateFallbackSelector)
 		}
 
-		startDate, endDate, err := s.parseDateRange(dateText, year)
-		if err != nil {
-			s.logger.Warn("Could not parse race card", slog.String("year", year), slog.String("error", err.Error()))
+		if raceName == "" {
+			skipped++
+			s.logger.Warn("Skipping race card without a name", slog.String("year", year), slog.Int("card", i))
 			return
 		}
 
-		race := &Race{
+		startDate, endDate, err := s.parseDateRange(dateText, year)
+		if err != nil {
+			skipped++
+			s.logger.Warn("Could not parse race card", slog.String("year", year), slog.String("race", raceName), slog.String("error", err.Error()))
+			return
+		}
+
+		races = append(races, &Race{
 			Name:          raceName,
 			Country:       description,
 			RaceStartDate: startDate,
 			RaceEndDate:   endDate,
-		}
-		races = append(races, race)
+		})
 	})
+
+	if len(races) == 0 {
+		return nil, fmt.Errorf("no races parsed from %s (%d cards found, %d skipped) - page layout may have changed", url, cards.Length(), skipped)
+	}
 
 	s.logger.Info("Scraping for year completed.",
 		slog.String("year", year),
 		slog.Int("totalParsed", len(races)),
+		slog.Int("skipped", skipped),
 		slog.Duration("duration", time.Since(startTime)),
 	)
 
@@ -145,8 +149,7 @@ func (s *ScrapedRaceService) UpdateRaceFromScraperForSeason(ctx context.Context,
 	s.logger.Info("Starting race update for season.", slog.String("year", year))
 
 	scrapedData, err := s.ScrapeF1Race(ctx, year)
-	if err != nil || len(scrapedData) == 0 {
-		s.logger.Warn("No scraped data found for season. Skipping update.", slog.String("year", year))
+	if err != nil {
 		return err
 	}
 
@@ -162,27 +165,35 @@ func (s *ScrapedRaceService) UpdateRaceFromScraperForSeason(ctx context.Context,
 
 	scheduledStatus, err := s.raceStatusRepository.FindByName(ctx, "SCHEDULED")
 	if err != nil {
-		return fmt.Errorf("RaceStatus 'SCHEDULED' not found: %w", err)
+		return fmt.Errorf("looking up RaceStatus 'SCHEDULED' failed: %w", err)
+	}
+	if scheduledStatus == nil {
+		return errors.New("RaceStatus 'SCHEDULED' not found")
 	}
 
 	s.logger.Info("Processing scraped races for season.", slog.Int("count", len(scrapedData)), slog.String("year", year))
 
+	var errs []error
 	for _, scrapedRace := range scrapedData {
 		err := s.txManager.WithTx(ctx, func(txCtx context.Context) error {
 			return s.ProcessSingleRace(txCtx, scrapedRace, season, scheduledStatus)
 		})
 		if err != nil {
 			s.logger.Error("Failed to process race", slog.String("name", scrapedRace.Name), slog.String("year", year), slog.String("error", err.Error()))
+			errs = append(errs, fmt.Errorf("race %q: %w", scrapedRace.Name, err))
 		}
 	}
 
 	s.logger.Info("Race update for season completed.", slog.String("year", year), slog.Duration("duration", time.Since(startTime)))
-	return nil
+	return errors.Join(errs...)
 }
 
 func (s *ScrapedRaceService) GetOrCreateSeason(ctx context.Context, year string) (*Season, error) {
 	season, err := s.seasonRepository.FindBySeasonName(ctx, year)
-	if err == nil && season != nil {
+	if err != nil {
+		return nil, fmt.Errorf("season lookup failed for %s: %w", year, err)
+	}
+	if season != nil {
 		return season, nil
 	}
 
@@ -200,7 +211,32 @@ func (s *ScrapedRaceService) GetOrCreateSeason(ctx context.Context, year string)
 
 func (s *ScrapedRaceService) ProcessSingleRace(ctx context.Context, scrapedRace *Race, season *Season, defaultStatus *RaceStatus) error {
 	race, err := s.raceRepository.FindByNameAndRaceStartDateAndRaceEndDate(ctx, scrapedRace.Name, scrapedRace.RaceStartDate, scrapedRace.RaceEndDate)
-	if err != nil || race == nil {
+	if err != nil {
+		return fmt.Errorf("race lookup failed: %w", err)
+	}
+
+	if race == nil {
+		// Same race, new sponsor name? Match on start date within the season and
+		// update it instead of inserting a duplicate that would never match an
+		// F1.com result page.
+		race, err = s.raceRepository.FindByRaceStartDateInSeason(ctx, season.SeasonName, scrapedRace.RaceStartDate)
+		if err != nil {
+			return fmt.Errorf("race lookup by start date failed: %w", err)
+		}
+		if race != nil {
+			s.logger.Info("Existing race found by start date - updating its details.",
+				slog.String("old_name", race.Name), slog.String("new_name", scrapedRace.Name))
+			if err := s.raceRepository.UpdateDetails(ctx, race.ID, scrapedRace.Name, scrapedRace.Country, scrapedRace.RaceStartDate, scrapedRace.RaceEndDate); err != nil {
+				return fmt.Errorf("updating race details failed: %w", err)
+			}
+			race.Name = scrapedRace.Name
+			race.Country = scrapedRace.Country
+			race.RaceStartDate = scrapedRace.RaceStartDate
+			race.RaceEndDate = scrapedRace.RaceEndDate
+		}
+	}
+
+	if race == nil {
 		s.logger.Info("Race not found. Saving new race record.", slog.String("name", scrapedRace.Name))
 		now := time.Now()
 		newRace := &Race{
@@ -214,25 +250,26 @@ func (s *ScrapedRaceService) ProcessSingleRace(ctx context.Context, scrapedRace 
 			UpdatedAt:     now,
 		}
 
-		var saveErr error
-		race, saveErr = s.raceRepository.Save(ctx, newRace)
-		if saveErr != nil {
-			return saveErr
+		race, err = s.raceRepository.Save(ctx, newRace)
+		if err != nil {
+			return err
 		}
 	}
 
 	exists, err := s.raceSeasonRepository.ExistsByRaceAndSeason(ctx, race, season)
-	if err == nil && !exists {
+	if err != nil {
+		return fmt.Errorf("race/season link lookup failed: %w", err)
+	}
+	if !exists {
 		s.logger.Info("Linking race to season.", slog.String("race", race.Name), slog.String("season", season.SeasonName))
 		now := time.Now()
-		raceSeason := &RaceSeason{
+		return s.raceSeasonRepository.Save(ctx, &RaceSeason{
 			ID:        uuid.New(),
 			Race:      race,
 			Season:    season,
 			CreatedAt: now,
 			UpdatedAt: now,
-		}
-		return s.raceSeasonRepository.Save(ctx, raceSeason)
+		})
 	}
 
 	return nil
@@ -251,40 +288,38 @@ func (s *ScrapedRaceService) parseMonth(monthStr string) (time.Month, error) {
 }
 
 func (s *ScrapedRaceService) parseDateRange(rangeStr, year string) (time.Time, time.Time, error) {
-	crossMonth := regexp.MustCompile(`(?P<startDay>\d{2}).*?(?P<startMonth>[a-zA-Z]{3}).*?(?P<endDay>\d{2}).*?(?P<endMonth>[a-zA-Z]{3})`)
-	sameMonth := regexp.MustCompile(`(?P<startDay>\d{2}).*?(?P<endDay>\d{2}).*?(?P<endMonth>[a-zA-Z]{3})`)
-
 	yearInt, err := strconv.Atoi(year)
 	if err != nil {
 		return time.Time{}, time.Time{}, fmt.Errorf("invalid year format: %s", year)
 	}
 
-	if matches := crossMonth.FindStringSubmatch(rangeStr); matches != nil {
-		startDay, _ := strconv.Atoi(matches[crossMonth.SubexpIndex("startDay")])
-		endDay, _ := strconv.Atoi(matches[crossMonth.SubexpIndex("endDay")])
-		startMonth, err1 := s.parseMonth(matches[crossMonth.SubexpIndex("startMonth")])
-		endMonth, err2 := s.parseMonth(matches[crossMonth.SubexpIndex("endMonth")])
+	var startDate, endDate time.Time
+
+	if m := crossMonthDatePattern.FindStringSubmatch(rangeStr); m != nil {
+		startDay, _ := strconv.Atoi(m[crossMonthDatePattern.SubexpIndex("startDay")])
+		endDay, _ := strconv.Atoi(m[crossMonthDatePattern.SubexpIndex("endDay")])
+		startMonth, err1 := s.parseMonth(m[crossMonthDatePattern.SubexpIndex("startMonth")])
+		endMonth, err2 := s.parseMonth(m[crossMonthDatePattern.SubexpIndex("endMonth")])
 		if err1 != nil || err2 != nil {
 			return time.Time{}, time.Time{}, fmt.Errorf("failed to parse month in range: %s", rangeStr)
 		}
-
-		startDate := time.Date(yearInt, startMonth, startDay, 0, 0, 0, 0, time.UTC)
-		endDate := time.Date(yearInt, endMonth, endDay, 0, 0, 0, 0, time.UTC)
-		return startDate, endDate, nil
-	}
-
-	if matches := sameMonth.FindStringSubmatch(rangeStr); matches != nil {
-		startDay, _ := strconv.Atoi(matches[sameMonth.SubexpIndex("startDay")])
-		endDay, _ := strconv.Atoi(matches[sameMonth.SubexpIndex("endDay")])
-		month, err := s.parseMonth(matches[sameMonth.SubexpIndex("endMonth")])
+		startDate = time.Date(yearInt, startMonth, startDay, 0, 0, 0, 0, time.UTC)
+		endDate = time.Date(yearInt, endMonth, endDay, 0, 0, 0, 0, time.UTC)
+	} else if m := sameMonthDatePattern.FindStringSubmatch(rangeStr); m != nil {
+		startDay, _ := strconv.Atoi(m[sameMonthDatePattern.SubexpIndex("startDay")])
+		endDay, _ := strconv.Atoi(m[sameMonthDatePattern.SubexpIndex("endDay")])
+		month, err := s.parseMonth(m[sameMonthDatePattern.SubexpIndex("endMonth")])
 		if err != nil {
 			return time.Time{}, time.Time{}, fmt.Errorf("failed to parse month in range: %s", rangeStr)
 		}
-
-		startDate := time.Date(yearInt, month, startDay, 0, 0, 0, 0, time.UTC)
-		endDate := time.Date(yearInt, month, endDay, 0, 0, 0, 0, time.UTC)
-		return startDate, endDate, nil
+		startDate = time.Date(yearInt, month, startDay, 0, 0, 0, 0, time.UTC)
+		endDate = time.Date(yearInt, month, endDay, 0, 0, 0, 0, time.UTC)
+	} else {
+		return time.Time{}, time.Time{}, fmt.Errorf("unknown date format: %q", rangeStr)
 	}
 
-	return time.Time{}, time.Time{}, fmt.Errorf("unknown date format: %s", rangeStr)
+	if endDate.Before(startDate) {
+		return time.Time{}, time.Time{}, fmt.Errorf("end date before start date in range: %q", rangeStr)
+	}
+	return startDate, endDate, nil
 }

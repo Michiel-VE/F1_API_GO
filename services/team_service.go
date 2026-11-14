@@ -2,7 +2,6 @@ package services
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 
 	converter "f1-api-go/internal/convertor"
@@ -36,16 +35,14 @@ func NewTeamService(
 func (s *TeamService) GetAllTeamsForSeason(ctx context.Context, season string) ([]response.TeamWithPointsResponse, error) {
 	cacheKey := fmt.Sprintf("teams::season:%s", season)
 
-	if s.cacheEnabled {
-		if cachedData, err := s.redisClient.Get(ctx, cacheKey).Bytes(); err == nil {
-			var cachedResp []response.TeamWithPointsResponse
-			if err := json.Unmarshal(cachedData, &cachedResp); err == nil {
-				return cachedResp, nil
-			}
-		}
+	// cacheGetJSON/cacheSetJSON also check redisClient != nil (this method used
+	// to dereference a nil client when caching was enabled without Redis).
+	var cached []response.TeamWithPointsResponse
+	if cacheGetJSON(ctx, s.redisClient, s.cacheEnabled, cacheKey, &cached) {
+		return cached, nil
 	}
 
-	teams, err := s.driverTeamSeasonRepository.FindAllTeamsBySeasonName(season)
+	teams, err := s.driverTeamSeasonRepository.FindAllTeamsBySeasonName(ctx, season)
 	if err != nil {
 		return nil, err
 	}
@@ -55,19 +52,17 @@ func (s *TeamService) GetAllTeamsForSeason(ctx context.Context, season string) (
 		result = append(result, converter.TeamWithPointsToResponse(team))
 	}
 
-	if s.cacheEnabled {
-		if bytes, err := json.Marshal(result); err == nil {
-			s.redisClient.Set(ctx, cacheKey, bytes, 0)
-		}
-	}
-
+	cacheSetJSON(ctx, s.redisClient, s.cacheEnabled, cacheKey, result)
 	return result, nil
 }
 
 func (s *TeamService) SearchTeamByName(ctx context.Context, name string) (*response.TeamResponse, error) {
-	team, err := s.teamRepository.FindByName(name)
-	if err != nil || team == nil {
-		return nil, fmt.Errorf("team not found")
+	team, err := s.teamRepository.FindByName(ctx, name)
+	if err != nil {
+		return nil, err
+	}
+	if team == nil {
+		return nil, fmt.Errorf("%w: team not found", ErrNotFound)
 	}
 
 	res := converter.TeamToResponse(*team)

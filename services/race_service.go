@@ -2,7 +2,6 @@ package services
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 
 	converter "f1-api-go/internal/convertor"
@@ -34,28 +33,19 @@ func NewRaceService(
 func (s *RaceService) GetAllRacesForSeason(ctx context.Context, season string) ([]response.RaceResponse, error) {
 	cacheKey := fmt.Sprintf("races::season:%s", season)
 
-	if s.cacheEnabled && s.redisClient != nil {
-		if cachedData, err := s.redisClient.Get(ctx, cacheKey).Bytes(); err == nil {
-			var cachedResp []response.RaceResponse
-			if err := json.Unmarshal(cachedData, &cachedResp); err == nil {
-				return cachedResp, nil
-			}
-		}
+	var cached []response.RaceResponse
+	if cacheGetJSON(ctx, s.redisClient, s.cacheEnabled, cacheKey, &cached) {
+		return cached, nil
 	}
 
-	races, err := s.raceRepository.FindAllRacesBySeasonName(season)
+	races, err := s.raceRepository.FindAllRacesBySeasonName(ctx, season)
 	if err != nil {
 		return nil, err
 	}
 
 	result := s.convertList(races)
 
-	if s.cacheEnabled && s.redisClient != nil {
-		if bytes, err := json.Marshal(result); err == nil {
-			s.redisClient.Set(ctx, cacheKey, bytes, 0)
-		}
-	}
-
+	cacheSetJSON(ctx, s.redisClient, s.cacheEnabled, cacheKey, result)
 	return result, nil
 }
 

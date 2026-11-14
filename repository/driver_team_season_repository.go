@@ -1,10 +1,12 @@
 package repository
 
 import (
+	"context"
 	"errors"
 
 	"f1-api-go/internal/dto"
 	"f1-api-go/internal/models"
+
 	"github.com/google/uuid"
 	"gorm.io/gorm"
 )
@@ -17,16 +19,28 @@ func NewDriverTeamSeasonRepository(db *gorm.DB) *DriverTeamSeasonRepository {
 	return &DriverTeamSeasonRepository{db: db}
 }
 
-func (r *DriverTeamSeasonRepository) FindByDriverAndSeasonAndTeam(driverID, seasonID, teamID uuid.UUID) (*models.DriverTeamSeason, error) {
+// FindByDriverAndSeasonAndTeam returns (nil, nil) when no row exists and an
+// error only for real database failures (callers must not treat an error as
+// "not found", or they will insert duplicates).
+func (r *DriverTeamSeasonRepository) FindByDriverAndSeasonAndTeam(ctx context.Context, driverID, seasonID, teamID uuid.UUID) (*models.DriverTeamSeason, error) {
 	var dts models.DriverTeamSeason
-	err := r.db.Where("driver_id = ? AND season_id = ? AND team_id = ?", driverID, seasonID, teamID).First(&dts).Error
+	err := DBFrom(ctx, r.db).
+		Where("driver_id = ? AND season_id = ? AND team_id = ?", driverID, seasonID, teamID).
+		First(&dts).Error
 	if errors.Is(err, gorm.ErrRecordNotFound) {
 		return nil, nil
 	}
-	return &dts, err
+	if err != nil {
+		return nil, err
+	}
+	return &dts, nil
 }
 
-func (r *DriverTeamSeasonRepository) FindDriverPositionByLastNameAndSeason(driverLastName, seasonName string) (*int, error) {
+func (r *DriverTeamSeasonRepository) Save(ctx context.Context, dts *models.DriverTeamSeason) error {
+	return DBFrom(ctx, r.db).Save(dts).Error
+}
+
+func (r *DriverTeamSeasonRepository) FindDriverPositionByLastNameAndSeason(ctx context.Context, driverLastName, seasonName string) (*int, error) {
 	query := `
 		WITH RankedResults AS (
 			SELECT
@@ -43,14 +57,17 @@ func (r *DriverTeamSeasonRepository) FindDriverPositionByLastNameAndSeason(drive
 		WHERE LOWER(driver_surname) = LOWER(?) AND season_name = ?`
 
 	var position int
-	err := r.db.Raw(query, driverLastName, seasonName).Scan(&position).Error
-	if errors.Is(err, gorm.ErrRecordNotFound) || position == 0 {
+	err := DBFrom(ctx, r.db).Raw(query, driverLastName, seasonName).Scan(&position).Error
+	if err != nil {
+		return nil, err
+	}
+	if position == 0 {
 		return nil, nil
 	}
-	return &position, err
+	return &position, nil
 }
 
-func (r *DriverTeamSeasonRepository) FindDriverPositionByDtsID(dtsID uuid.UUID) (*int, error) {
+func (r *DriverTeamSeasonRepository) FindDriverPositionByDtsID(ctx context.Context, dtsID uuid.UUID) (*int, error) {
 	query := `
 		WITH RankedResults AS (
 			SELECT
@@ -63,14 +80,17 @@ func (r *DriverTeamSeasonRepository) FindDriverPositionByDtsID(dtsID uuid.UUID) 
 		WHERE rr.dts_id = ?`
 
 	var position int
-	err := r.db.Raw(query, dtsID).Scan(&position).Error
-	if errors.Is(err, gorm.ErrRecordNotFound) || position == 0 {
+	err := DBFrom(ctx, r.db).Raw(query, dtsID).Scan(&position).Error
+	if err != nil {
+		return nil, err
+	}
+	if position == 0 {
 		return nil, nil
 	}
-	return &position, err
+	return &position, nil
 }
 
-func (r *DriverTeamSeasonRepository) FindAllTeamsBySeasonName(seasonName string) ([]dto.TeamWithPointsDTO, error) {
+func (r *DriverTeamSeasonRepository) FindAllTeamsBySeasonName(ctx context.Context, seasonName string) ([]dto.TeamWithPointsDTO, error) {
 	query := `
 		SELECT
 			t.id,
@@ -88,12 +108,12 @@ func (r *DriverTeamSeasonRepository) FindAllTeamsBySeasonName(seasonName string)
 		ORDER BY total_points DESC`
 
 	var results []dto.TeamWithPointsDTO
-	err := r.db.Raw(query, seasonName).Scan(&results).Error
+	err := DBFrom(ctx, r.db).Raw(query, seasonName).Scan(&results).Error
 	return results, err
 }
 
-func (r *DriverTeamSeasonRepository) FindAllBySeasonID(seasonID uuid.UUID) ([]models.DriverTeamSeason, error) {
+func (r *DriverTeamSeasonRepository) FindAllBySeasonID(ctx context.Context, seasonID uuid.UUID) ([]models.DriverTeamSeason, error) {
 	var list []models.DriverTeamSeason
-	err := r.db.Where("season_id = ?", seasonID).Find(&list).Error
+	err := DBFrom(ctx, r.db).Where("season_id = ?", seasonID).Find(&list).Error
 	return list, err
 }
