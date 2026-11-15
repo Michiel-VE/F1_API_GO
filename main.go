@@ -296,12 +296,19 @@ func (a *driverRepoAdapter) Save(ctx context.Context, driver *models.Driver) err
 // ---------------------------------------------------------------------------
 
 func openDB() (*gorm.DB, error) {
-	return gorm.Open(postgres.New(postgres.Config{
+	db, err := gorm.Open(postgres.New(postgres.Config{
 		DSN:                  config.AppCfg.DatabaseURL,
 		PreferSimpleProtocol: true,
 	}), &gorm.Config{
 		PrepareStmt: false,
 	})
+	if err != nil {
+		return nil, err
+	}
+	if err := config.ApplyDBPool(db); err != nil {
+		return nil, err
+	}
+	return db, nil
 }
 
 func openRedis() (*redis.Client, error) {
@@ -396,6 +403,7 @@ func main() {
 		log.Fatalf("Failed to initialize JWT service: %v", err)
 	}
 	authService := services.NewAuthService(userRepo, jwtService)
+	oauthService := services.NewOAuthService(userRepo)
 
 	authController := controller.NewAuthController(authService, jwtService)
 	profileController := controller.NewProfileController(userService)
@@ -403,6 +411,7 @@ func main() {
 	teamController := controller.NewTeamController(teamService)
 	raceController := controller.NewRaceController(raceService)
 	predictionController := controller.NewPredictionController(predictionService)
+	oauthController := controller.NewOAuthController(config.AppCfg.GoogleOAuth, config.AppCfg.GoogleUserInfoURI, oauthService, authService)
 
 	r := config.SecurityConfig(
 		authController,
@@ -412,7 +421,7 @@ func main() {
 		raceController,
 		predictionController,
 		jwtService,
-		nil,
+		oauthController,
 	)
 
 	serverAddr := fmt.Sprintf(":%s", config.AppCfg.ServerPort)

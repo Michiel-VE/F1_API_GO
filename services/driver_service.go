@@ -31,19 +31,6 @@ func NewDriverService(
 	}
 }
 
-func (s *DriverService) GetDriverById(ctx context.Context, id uuid.UUID) (*response.DriverWithSeasonsResponse, error) {
-	driver, err := s.driverRepository.FindByID(ctx, id)
-	if err != nil {
-		return nil, err
-	}
-	if driver == nil {
-		return nil, fmt.Errorf("%w: driver not found", ErrNotFound)
-	}
-
-	res := mapDriverToWithSeasonsResponse(driver)
-	return &res, nil
-}
-
 func (s *DriverService) GetDriversByLastName(ctx context.Context, lastName string) (*response.DriverResponse, error) {
 	driver, err := s.driverRepository.FindByLastNameIgnoreCase(ctx, lastName)
 	if err != nil {

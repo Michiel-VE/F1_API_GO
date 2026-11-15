@@ -1,7 +1,6 @@
 package config
 
 import (
-	"log"
 	"net/http"
 	"os"
 	"strings"
@@ -13,43 +12,24 @@ import (
 
 	"github.com/gin-contrib/cors"
 	"github.com/gin-gonic/gin"
-	"golang.org/x/crypto/bcrypt"
-	"golang.org/x/oauth2"
-	"golang.org/x/oauth2/google"
 )
 
-type OAuthProperties struct {
-	GoogleClientID     string
-	GoogleClientSecret string
-	OAuth2Config       *oauth2.Config
+// allowedOrigins lists who may call the API from a browser. The localhost
+// origins are only allowed outside production, unless you opt in with
+// CORS_ALLOW_LOCALHOST=true (for example to develop the frontend locally
+// against the deployed API).
+func allowedOrigins() []string {
+	origins := []string{
+		"https://f1.michielve.be",
+		"https://f1-api.michielve.be",
+	}
+	if !IsProduction() || strings.EqualFold(os.Getenv("CORS_ALLOW_LOCALHOST"), "true") {
+		origins = append(origins, "http://localhost:4200", "http://localhost:8080")
+	}
+	return origins
 }
 
-func NewOAuthProperties() *OAuthProperties {
-	clientID := os.Getenv("SPRING_SECURITY_OAUTH2_CLIENT_REGISTRATION_GOOGLE_CLIENT_ID")
-	clientSecret := os.Getenv("SPRING_SECURITY_OAUTH2_CLIENT_REGISTRATION_GOOGLE_CLIENT_SECRET")
-
-	forcedRedirectURI := os.Getenv("SPRING_SECURITY_OAUTH2_CLIENT_REGISTRATION_GOOGLE_REDIRECT_URI")
-	redirectURI := forcedRedirectURI
-	if redirectURI == "" {
-		baseURL := os.Getenv("BASE_URL")
-		redirectURI = baseURL + "/login/oauth2/code/google"
-	}
-
-	oauthConfig := &oauth2.Config{
-		ClientID:     clientID,
-		ClientSecret: clientSecret,
-		RedirectURL:  redirectURI,
-		Scopes:       []string{"openid", "profile", "email"},
-		Endpoint:     google.Endpoint,
-	}
-
-	return &OAuthProperties{
-		GoogleClientID:     clientID,
-		GoogleClientSecret: clientSecret,
-		OAuth2Config:       oauthConfig,
-	}
-}
-
+// SecurityConfig builds the gin engine: middleware first, then every route.
 func SecurityConfig(
 	authController *controller.AuthController,
 	profileController *controller.ProfileController,
@@ -58,131 +38,117 @@ func SecurityConfig(
 	raceController *controller.RaceController,
 	predictionController *controller.PredictionController,
 	jwtService *services.JWTService,
-	oAuthSuccessHandler *security.OAuth2AuthenticationSuccessHandler,
+	oauthController *controller.OAuthController,
 ) *gin.Engine {
+	// Debug mode (the default) prints every route at startup and is slower.
+	if IsProduction() {
+		gin.SetMode(gin.ReleaseMode)
+	}
+
 	r := gin.New()
 	r.Use(gin.Recovery())
 
-	// CORS MUST be absolute first so headers are attached to ALL responses (including errors, 401, 404)
-	corsConfig := cors.Config{
-		AllowOrigins: []string{
-			"http://localhost:4200",
-			"http://localhost:8080",
-			"https://f1.michielve.be",
-			"https://f1-api.michielve.be",
-		},
+	// CORS must come first so headers are attached to ALL responses (including
+	// errors, 401, 404). It also answers preflight requests itself and rejects
+	// requests from origins that are not in the list.
+	r.Use(cors.New(cors.Config{
+		AllowOrigins:     allowedOrigins(),
 		AllowMethods:     []string{"GET", "POST", "PUT", "DELETE", "OPTIONS"},
 		AllowHeaders:     []string{"Authorization", "Content-Type", "X-Requested-With", "Accept", "Origin"},
 		ExposeHeaders:    []string{"Authorization"},
 		AllowCredentials: true,
-	}
-	r.Use(cors.New(corsConfig))
-
-	// --- TEMPORARY DEBUG MIDDLEWARE ---
-	// Logs whether the Origin header arrived and whether the CORS
-	// middleware actually set Access-Control-Allow-Origin on the response.
-	// Remove once the missing-CORS-header issue is resolved.
-	r.Use(func(c *gin.Context) {
-		c.Next()
-		log.Printf(
-			"DEBUG origin=%q acao=%q acac=%q status=%d method=%s path=%s",
-			c.Request.Header.Get("Origin"),
-			c.Writer.Header().Get("Access-Control-Allow-Origin"),
-			c.Writer.Header().Get("Access-Control-Allow-Credentials"),
-			c.Writer.Status(),
-			c.Request.Method,
-			c.Request.URL.Path,
-		)
-	})
-	// --- END TEMPORARY DEBUG MIDDLEWARE ---
-
+	}))
 	r.Use(exceptions.GlobalExceptionHandler())
 	r.Use(security.JwtFilter(jwtService))
 
-	auth := r.Group("/api/v1/auth")
-	{
-		auth.POST("/register", authController.Register)
-		auth.POST("/login", authController.Login)
-		auth.POST("/logout", func(c *gin.Context) {
-			isProduction := strings.EqualFold(os.Getenv("SPRING_PROFILES_ACTIVE"), "prod") ||
-				(os.Getenv("BASE_URL") != "" && strings.Contains(os.Getenv("BASE_URL"), "michielve.be"))
-
-			domain := ""
-			if isProduction {
-				domain = "michielve.be"
-			}
-
-			c.SetSameSite(http.SameSiteLaxMode)
-			c.SetCookie("jwt", "", -1, "/", domain, isProduction, true)
-			authController.Logout(c)
-		})
-	}
-
-	// PUBLIC ROUTES
-	public := r.Group("/api/v1")
-	{
-		// Driver Routes
-		// Driver Routes
-		public.GET("/drivers", driverController.GetAllDrivers)
-		public.GET("/driver", driverController.GetDriverByPermanentNumber)
-		public.GET("/drivers/lastname/:lastName", driverController.GetDriverByLastName)
-		public.GET("/drivers/name/:name/career-history", driverController.GetDriverCareerHistory)
-		public.GET("/drivers/season/:season", driverController.GetDriversBySeason)
-		public.GET("/drivers/:id/race-results", driverController.GetDriverRaceResults)
-
-		// Team Routes
-		public.GET("/teams/:season", teamController.GetAllTeamsForSeason)
-		public.GET("/team/:name", teamController.SearchTeamByName)
-
-		// Race Routes
-		public.GET("/races/:season", raceController.GetAllRacesForSeason)
-	}
-
-	// PROTECTED ROUTES
-	protected := r.Group("/api/v1")
-	protected.Use(RequireAuth())
-	{
-		// Profile Routes
-		protected.GET("/profile", profileController.GetProfile)
-
-		// Prediction & Pool Routes
-		protected.POST("/predictions", predictionController.CreatePrediction)
-		protected.POST("/predictions/team", predictionController.CreateTeamPrediction)
-		protected.GET("/predictions/pools", predictionController.GetUserPools)
-		protected.GET("/predictions/pools/:poolId", predictionController.GetPoolDetails)
-		protected.GET("/predictions/status", predictionController.GetPredictionStatus)
-		protected.GET("/predictions/team/personal", predictionController.GetPersonalTeamPrediction)
-		protected.GET("/predictions/pools/:poolId/team", predictionController.GetPoolTeamPrediction)
-		protected.POST("/predictions/pools", predictionController.CreatePool)
-		protected.POST("/predictions/pools/join", predictionController.JoinPool)
-
-		protected.DELETE("/predictions/pools/:poolId", predictionController.LeavePool)
-		protected.DELETE("/predictions/pools/:poolId/members/:memberId", predictionController.KickMember)
-	}
+	registerAuthRoutes(r, authController)
+	registerOAuthRoutes(r, oauthController)
+	registerPublicRoutes(r, driverController, teamController, raceController)
+	registerProtectedRoutes(r, profileController, predictionController)
 
 	r.NoRoute(func(c *gin.Context) {
-		c.AbortWithStatus(http.StatusNotFound)
+		controller.SendError(c, http.StatusNotFound, "Not found")
 	})
 
 	return r
 }
 
+func registerAuthRoutes(r *gin.Engine, auth *controller.AuthController) {
+	g := r.Group("/api/v1/auth")
+	g.POST("/register", auth.Register)
+	g.POST("/login", auth.Login)
+	g.POST("/logout", auth.Logout)
+}
+
+// registerOAuthRoutes adds Google sign-in. These exact paths are what API
+// Gateway forwards (/oauth2/{proxy+} and /login/oauth2/{proxy+}) and what is
+// registered as the redirect URI in the Google console.
+func registerOAuthRoutes(r *gin.Engine, oauth *controller.OAuthController) {
+	if oauth == nil {
+		return
+	}
+	r.GET("/oauth2/authorization/google", oauth.Start)
+	r.GET("/login/oauth2/code/google", oauth.Callback)
+}
+
+func registerPublicRoutes(
+	r *gin.Engine,
+	drivers *controller.DriverController,
+	teams *controller.TeamController,
+	races *controller.RaceController,
+) {
+	g := r.Group("/api/v1")
+
+	// Drivers
+	g.GET("/drivers", drivers.GetAllDrivers)
+	g.GET("/driver", drivers.GetDriverByPermanentNumber)
+	g.GET("/drivers/lastname/:lastName", drivers.GetDriverByLastName)
+	g.GET("/drivers/name/:name/career-history", drivers.GetDriverCareerHistory)
+	g.GET("/drivers/season/:season", drivers.GetDriversBySeason)
+	g.GET("/drivers/:id/race-results", drivers.GetDriverRaceResults)
+
+	// Teams
+	g.GET("/teams/:season", teams.GetAllTeamsForSeason)
+	g.GET("/team/:name", teams.SearchTeamByName)
+
+	// Races
+	g.GET("/races/:season", races.GetAllRacesForSeason)
+}
+
+func registerProtectedRoutes(
+	r *gin.Engine,
+	profile *controller.ProfileController,
+	predictions *controller.PredictionController,
+) {
+	g := r.Group("/api/v1")
+	g.Use(RequireAuth())
+
+	// Profile
+	g.GET("/profile", profile.GetProfile)
+
+	// Predictions and pools
+	g.POST("/predictions", predictions.CreatePrediction)
+	g.POST("/predictions/team", predictions.CreateTeamPrediction)
+	g.GET("/predictions/status", predictions.GetPredictionStatus)
+	g.GET("/predictions/team/personal", predictions.GetPersonalTeamPrediction)
+
+	g.GET("/predictions/pools", predictions.GetUserPools)
+	g.POST("/predictions/pools", predictions.CreatePool)
+	g.POST("/predictions/pools/join", predictions.JoinPool)
+	g.GET("/predictions/pools/:poolId", predictions.GetPoolDetails)
+	g.GET("/predictions/pools/:poolId/team", predictions.GetPoolTeamPrediction)
+	g.DELETE("/predictions/pools/:poolId", predictions.LeavePool)
+	g.DELETE("/predictions/pools/:poolId/members/:memberId", predictions.KickMember)
+}
+
+// RequireAuth rejects requests that JwtFilter did not authenticate.
 func RequireAuth() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		if _, exists := c.Get("userPrincipal"); !exists {
-			c.AbortWithStatus(http.StatusUnauthorized)
+			controller.SendError(c, http.StatusUnauthorized, "Authentication required")
+			c.Abort()
 			return
 		}
 		c.Next()
 	}
-}
-
-func HashPassword(password string) (string, error) {
-	bytes, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
-	return string(bytes), err
-}
-
-func CheckPasswordHash(password, hash string) bool {
-	err := bcrypt.CompareHashAndPassword([]byte(hash), []byte(password))
-	return err == nil
 }

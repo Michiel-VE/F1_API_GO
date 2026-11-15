@@ -3,8 +3,8 @@ package config
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 	"log"
+	"net/url"
 	"os"
 	"strconv"
 	"strings"
@@ -49,16 +49,46 @@ var (
 	once   sync.Once
 )
 
+// IsProduction is the one place that decides "are we in production". It uses
+// the same ENV variable that picks Secrets Manager over local.env.
+func IsProduction() bool {
+	return strings.EqualFold(os.Getenv("ENV"), "prod")
+}
+
 func InitConfig() {
 	once.Do(func() {
-		env := os.Getenv("ENV")
-
-		if strings.EqualFold(env, "prod") {
+		if IsProduction() {
 			loadSecretsManager()
 		} else {
 			loadLocalEnv()
 		}
 	})
+}
+
+// postgresURL builds the connection string with proper escaping. The old
+// fmt.Sprintf broke as soon as the password contained @ : / ? # or %.
+func postgresURL(user, password, host string) string {
+	u := url.URL{
+		Scheme:   "postgres",
+		User:     url.UserPassword(user, password),
+		Host:     host + ":6543",
+		Path:     "/postgres",
+		RawQuery: "sslmode=require",
+	}
+	return u.String()
+}
+
+// upstashRedisURL builds the rediss:// URL with the token escaped.
+func upstashRedisURL(rawEndpoint, token string) string {
+	host := strings.TrimSpace(rawEndpoint)
+	host = strings.TrimPrefix(host, "https://")
+	host = strings.TrimSuffix(host, "/")
+	u := url.URL{
+		Scheme: "rediss",
+		User:   url.UserPassword("default", token),
+		Host:   host + ":6379",
+	}
+	return u.String()
 }
 
 func buildGoogleOAuth(clientID, clientSecret string) *oauth2.Config {
@@ -101,8 +131,7 @@ func loadLocalEnv() {
 
 	var redisURL string
 	if rawRedisURL != "" && redisToken != "" {
-		endpoint := strings.TrimPrefix(rawRedisURL, "https://")
-		redisURL = fmt.Sprintf("rediss://default:%s@%s:6379", redisToken, endpoint)
+		redisURL = upstashRedisURL(rawRedisURL, redisToken)
 	} else {
 		redisURL = os.Getenv("REDIS_URL")
 	}
@@ -113,12 +142,7 @@ func loadLocalEnv() {
 
 	var constructedURL string
 	if dbUser != "" && dbPassword != "" && dbHost != "" {
-		constructedURL = fmt.Sprintf(
-			"postgres://%s:%s@%s:6543/postgres?sslmode=require",
-			dbUser,
-			dbPassword,
-			dbHost,
-		)
+		constructedURL = postgresURL(dbUser, dbPassword, dbHost)
 	} else {
 		constructedURL = os.Getenv("SPRING_DATASOURCE_URL")
 	}
@@ -158,19 +182,25 @@ func loadSecretsManager() {
 		log.Fatal("Missing APP_SECRET_NAME environment variable.")
 	}
 
-	cfg, err := awsConfig.LoadDefaultConfig(context.TODO(), awsConfig.WithRegion("eu-north-1"))
+	// Without a timeout, a hanging Secrets Manager call would hang the whole
+	// cold start until the Lambda itself times out.
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+
+	cfg, err := awsConfig.LoadDefaultConfig(ctx, awsConfig.WithRegion("eu-north-1"))
 	if err != nil {
 		log.Fatalf("Unable to load AWS SDK config: %v", err)
 	}
 
 	client := secretsmanager.NewFromConfig(cfg)
-	input := &secretsmanager.GetSecretValueInput{
+	result, err := client.GetSecretValue(ctx, &secretsmanager.GetSecretValueInput{
 		SecretId: aws.String(appSecretName),
-	}
-
-	result, err := client.GetSecretValue(context.TODO(), input)
+	})
 	if err != nil {
 		log.Fatalf("Failed to load secrets: %v", err)
+	}
+	if result.SecretString == nil {
+		log.Fatalf("Secret %s has no string value", appSecretName)
 	}
 
 	var secrets map[string]string
@@ -178,35 +208,31 @@ func loadSecretsManager() {
 		log.Fatalf("Failed to parse secret JSON: %v", err)
 	}
 
-	token := secrets["upstash_redis_token"]
-	endpoint := strings.TrimPrefix(secrets["upstash_redis_url"], "https://")
-	redisURL := fmt.Sprintf("rediss://default:%s@%s:6379", token, endpoint)
+	// Fail at startup with a clear message instead of later with a confusing
+	// database or Redis error.
+	var missing []string
+	for _, key := range []string{"db_username", "db_password", "url", "jwt_secret_key", "upstash_redis_token", "upstash_redis_url"} {
+		if strings.TrimSpace(secrets[key]) == "" {
+			missing = append(missing, key)
+		}
+	}
+	if len(missing) > 0 {
+		log.Fatalf("Secret %s is missing required keys: %s", appSecretName, strings.Join(missing, ", "))
+	}
 
 	dbUser := secrets["db_username"]
 	dbPassword := secrets["db_password"]
-	dbHost := secrets["url"]
-
-	var constructedURL string
-	if dbUser != "" && dbPassword != "" && dbHost != "" {
-		constructedURL = fmt.Sprintf(
-			"postgres://%s:%s@%s:6543/postgres?sslmode=require",
-			dbUser,
-			dbPassword,
-			dbHost,
-		)
-	}
-
 	clientID := secrets["google_client_id"]
 	clientSecret := secrets["google_client_secret"]
 
 	AppCfg = AppConfig{
-		DatabaseURL:        constructedURL,
+		DatabaseURL:        postgresURL(dbUser, dbPassword, secrets["url"]),
 		DatabaseUser:       dbUser,
 		DatabasePassword:   dbPassword,
 		GoogleClientID:     clientID,
 		GoogleClientSecret: clientSecret,
 		JWTSecretKey:       secrets["jwt_secret_key"],
-		RedisURL:           redisURL,
+		RedisURL:           upstashRedisURL(secrets["upstash_redis_url"], secrets["upstash_redis_token"]),
 
 		ServerPort:          getEnv("PORT", "8080"),
 		GoogleOAuth:         buildGoogleOAuth(clientID, clientSecret),

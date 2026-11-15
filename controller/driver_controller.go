@@ -22,22 +22,6 @@ func NewDriverController(driverService *services.DriverService, driverRaceResult
 	}
 }
 
-func (d *DriverController) GetDriverById(c *gin.Context) {
-	id, err := uuid.Parse(c.Param("id"))
-	if err != nil {
-		SendError(c, http.StatusBadRequest, "Invalid driver ID")
-		return
-	}
-
-	driver, err := d.driverService.GetDriverById(c.Request.Context(), id)
-	if err != nil {
-		SendServiceError(c, err)
-		return
-	}
-
-	c.JSON(http.StatusOK, driver)
-}
-
 func (d *DriverController) GetDriverByLastName(c *gin.Context) {
 	lastName := c.Param("lastName")
 	driver, err := d.driverService.GetDriversByLastName(c.Request.Context(), lastName)

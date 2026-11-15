@@ -103,6 +103,12 @@ func (s *AuthService) LoginAndGetCookieHeader(req requests.LoginRequest, isProdu
 		return "", errors.New("invalid credentials")
 	}
 
+	return s.CookieHeaderForUser(user, isProduction, expirationMs)
+}
+
+// CookieHeaderForUser issues the session cookie for an already authenticated
+// user (password login and Google login share this).
+func (s *AuthService) CookieHeaderForUser(user *models.User, isProduction bool, expirationMs int64) (string, error) {
 	principal := &CustomUserPrincipal{
 		ID:       user.ID,
 		Username: user.Email,
@@ -115,6 +121,11 @@ func (s *AuthService) LoginAndGetCookieHeader(req requests.LoginRequest, isProdu
 	}
 
 	return BuildCookieHeader(token, isProduction, int(expirationMs/1000)), nil
+}
+
+// TokenLifetime is how long a session token (and its cookie) lives.
+func (s *AuthService) TokenLifetime() time.Duration {
+	return s.jwtService.GetExpiration()
 }
 
 func BuildCookieHeader(token string, isProduction bool, maxAgeSeconds int) string {
