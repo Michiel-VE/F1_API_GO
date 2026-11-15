@@ -6,7 +6,6 @@ import (
 	"strings"
 
 	"f1-api-go/controller"
-	"f1-api-go/exceptions"
 	"f1-api-go/security"
 	"f1-api-go/services"
 
@@ -58,7 +57,6 @@ func SecurityConfig(
 		ExposeHeaders:    []string{"Authorization"},
 		AllowCredentials: true,
 	}))
-	r.Use(exceptions.GlobalExceptionHandler())
 	r.Use(security.JwtFilter(jwtService))
 
 	registerAuthRoutes(r, authController)

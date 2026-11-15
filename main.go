@@ -301,6 +301,9 @@ func openDB() (*gorm.DB, error) {
 		PreferSimpleProtocol: true,
 	}), &gorm.Config{
 		PrepareStmt: false,
+		// Turns unique-constraint violations into gorm.ErrDuplicatedKey so the
+		// repositories can return a friendly "already exists" error.
+		TranslateError: true,
 	})
 	if err != nil {
 		return nil, err
