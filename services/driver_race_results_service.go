@@ -60,6 +60,7 @@ func (s *DriverRaceResultsService) GetDriverRaceResults(ctx context.Context, dri
 		raceResultDTOs = append(raceResultDTOs, response.RaceResultDTO{
 			RaceName:      raceName,
 			Points:        res.Points,
+			SprintPoints:  res.SprintPoints,
 			LapsCompleted: lapsPtr,
 			Status:        status,
 		})

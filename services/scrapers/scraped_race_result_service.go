@@ -15,9 +15,6 @@ import (
 )
 
 const (
-	// A race that finished longer ago than this and still has no F1.com page
-	// is no longer "probably not published yet": it's logged at ERROR and
-	// makes UpdatePendingRaceResults return an error so it can be alerted on.
 	staleAfter = 72 * time.Hour
 )
 
@@ -108,7 +105,7 @@ func (s *ScrapedRaceResultService) UpdatePendingRaceResults(ctx context.Context,
 		errs      []error
 		unmatched []string
 		stale     []string
-		used      = make(map[string]struct{}) // result pages already claimed this run
+		used      = make(map[string]struct{})
 	)
 
 	for i := range pendingRaces {
@@ -171,7 +168,6 @@ func isStaleRace(race *Race, now time.Time) bool {
 	return now.Sub(ref) > staleAfter
 }
 
-// summarizeDiscovered gives a compact "slug@date,slug@date" view for logs.
 func summarizeDiscovered(discovered []discoveredRace) string {
 	parts := make([]string, 0, len(discovered))
 	for _, d := range discovered {
@@ -253,15 +249,16 @@ func (s *ScrapedRaceResultService) ScrapeAndPersistRaceResult(ctx context.Contex
 		return fmt.Errorf("no result rows found at %s - page layout may have changed", resultUrl)
 	}
 
-	// The whole race is one transaction: either every driver's result is saved
-	// or none is, so a race is never left half-recorded (a race with any saved
-	// row would otherwise no longer count as "missing results").
+	// Also check if a sprint result URL exists for this weekend
+	sprintUrl := strings.Replace(resultUrl, "/race-result", "/sprint-results", 1)
+	sprintPointsMap := s.scrapeSprintPoints(ctx, sprintUrl)
+
 	return s.txManager.WithTx(ctx, func(txCtx context.Context) error {
 		var saved, existing, skipped int
 		var rowErr error
 
 		rows.EachWithBreak(func(i int, row *goquery.Selection) bool {
-			outcome, reason, err := s.parseAndSaveRow(txCtx, row, race, season)
+			outcome, reason, err := s.parseAndSaveRow(txCtx, row, race, season, sprintPointsMap)
 			if err != nil {
 				rowErr = fmt.Errorf("row %d: %w", i, err)
 				return false
@@ -297,6 +294,38 @@ func (s *ScrapedRaceResultService) ScrapeAndPersistRaceResult(ctx context.Contex
 	})
 }
 
+// scrapeSprintPoints checks if a sprint URL exists and extracts points per driver code
+func (s *ScrapedRaceResultService) scrapeSprintPoints(ctx context.Context, sprintUrl string) map[string]float64 {
+	pointsMap := make(map[string]float64)
+	doc, err := s.fetcher.fetchDocument(ctx, sprintUrl)
+	if err != nil {
+		// Sprint page may not exist for non-sprint weekends, which is completely normal
+		return pointsMap
+	}
+
+	rows := doc.Find("table tbody tr")
+	if rows.Length() == 0 {
+		return pointsMap
+	}
+
+	rows.Each(func(i int, row *goquery.Selection) {
+		cells := row.Find("td")
+		if cells.Length() < 7 {
+			return
+		}
+		driverCode := extractDriverCode(cells.Eq(2))
+		if driverCode == "" {
+			return
+		}
+		pts, err := parsePoints(cells.Eq(6).Text())
+		if err == nil && pts > 0 {
+			pointsMap[driverCode] = pts
+		}
+	})
+
+	return pointsMap
+}
+
 type rowOutcome int
 
 const (
@@ -305,11 +334,7 @@ const (
 	rowSkipped
 )
 
-// parseAndSaveRow returns an outcome (+reason) for rows that are fine or
-// deliberately skipped (header/odd rows), and a non-nil error for anything that
-// should abort and roll back the whole race: database failures, unparseable
-// points, and a driver code that doesn't exist in our drivers table.
-func (s *ScrapedRaceResultService) parseAndSaveRow(ctx context.Context, row *goquery.Selection, race *Race, season *Season) (rowOutcome, string, error) {
+func (s *ScrapedRaceResultService) parseAndSaveRow(ctx context.Context, row *goquery.Selection, race *Race, season *Season, sprintPointsMap map[string]float64) (rowOutcome, string, error) {
 	cells := row.Find("td")
 	if cells.Length() < 7 {
 		return rowSkipped, fmt.Sprintf("expected at least 7 cells, got %d", cells.Length()), nil
@@ -327,7 +352,7 @@ func (s *ScrapedRaceResultService) parseAndSaveRow(ctx context.Context, row *goq
 		return rowSkipped, "", fmt.Errorf("driver lookup failed for code %q: %w", driverCode, err)
 	}
 	if driver == nil {
-		return rowSkipped, "", fmt.Errorf("no driver in the database with driver_code %q (fix the drivers table; the race will be retried next run)", driverCode)
+		return rowSkipped, "", fmt.Errorf("no driver in the database with driver_code %q", driverCode)
 	}
 
 	exists, err := s.driverRaceResultRepository.ExistsByDriverAndRaceAndSeason(ctx, driver, race, season)
@@ -340,9 +365,10 @@ func (s *ScrapedRaceResultService) parseAndSaveRow(ctx context.Context, row *goq
 
 	points, err := parsePoints(cells.Eq(6).Text())
 	if err != nil {
-		return rowSkipped, "", fmt.Errorf("unparseable points for driver %q (layout change?): %w", driverCode, err)
+		return rowSkipped, "", fmt.Errorf("unparseable points for driver %q: %w", driverCode, err)
 	}
 
+	sprintPoints := sprintPointsMap[driverCode]
 	lapsCompleted, _ := strconv.Atoi(strings.TrimSpace(cells.Eq(4).Text()))
 
 	timeOrRetired := strings.TrimSpace(cells.Eq(5).Text())
@@ -355,6 +381,7 @@ func (s *ScrapedRaceResultService) parseAndSaveRow(ctx context.Context, row *goq
 		Race:          race,
 		Season:        season,
 		Points:        points,
+		SprintPoints:  sprintPoints,
 		LapsCompleted: lapsCompleted,
 		Status:        status,
 		CreatedAt:     now,
@@ -368,8 +395,6 @@ func (s *ScrapedRaceResultService) parseAndSaveRow(ctx context.Context, row *goq
 	return rowSaved, "", nil
 }
 
-// parsePoints treats empty / dash cells as 0 points but reports genuinely
-// unparseable text instead of silently recording 0.
 func parsePoints(raw string) (float64, error) {
 	text := strings.TrimSpace(raw)
 	switch text {

@@ -54,13 +54,13 @@ type ScrapedStanding struct {
 	Team        string
 	Points      int
 }
-
 type DriverRaceResult struct {
 	ID            uuid.UUID
 	Driver        *models.Driver
 	Race          *Race
 	Season        *Season
 	Points        float64
+	SprintPoints  float64
 	LapsCompleted int
 	Status        string
 	CreatedAt     time.Time

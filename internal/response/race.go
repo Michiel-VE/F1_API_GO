@@ -19,8 +19,9 @@ type RaceResponse struct {
 }
 
 type RaceResultDTO struct {
-	RaceName      string   `json:"raceName"`
-	Points        float64  `json:"points"`
-	Status        string   `json:"status"`
-	LapsCompleted *int     `json:"lapsCompleted,omitempty"`
+	RaceName      string  `json:"raceName"`
+	Points        float64 `json:"points"`
+	SprintPoints  float64 `json:"sprintPoints"`
+	Status        string  `json:"status"`
+	LapsCompleted *int    `json:"lapsCompleted,omitempty"`
 }
