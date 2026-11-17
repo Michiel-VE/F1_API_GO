@@ -148,7 +148,7 @@ var slugAliases = map[string][]string{
 	"miami":          {},
 	"canada":         {"canadian", "montreal"},
 	"monaco":         {"monte carlo"},
-	"spain":          {"espana", "spanish", "espanol"},
+	"spain":          {"espana", "spanish", "espanol", "barcelona", "catalunya", "madrid"},
 	"austria":        {"austrian", "osterreich", "spielberg"},
 	"great-britain":  {"british", "silverstone"},
 	"belgium":        {"belgian", "spa francorchamps"},

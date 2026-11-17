@@ -1,0 +1,676 @@
+{
+  "info": {
+    "name": "F1 API Local (Auto-Generated)",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "item": [
+    {
+      "name": "Predictions",
+      "item": [
+        {
+          "name": "POST /api/v1/predictions",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"season\": 2026,\n  \"raceId\": 1\n}"
+            },
+            "url": {
+              "raw": "http://localhost:8080/api/v1/predictions",
+              "host": [
+                "localhost:8080"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "predictions"
+              ]
+            }
+          }
+        },
+        {
+          "name": "POST /api/v1/predictions/pools",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"My F1 League\"\n}"
+            },
+            "url": {
+              "raw": "http://localhost:8080/api/v1/predictions/pools",
+              "host": [
+                "localhost:8080"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "predictions",
+                "pools"
+              ]
+            }
+          }
+        },
+        {
+          "name": "POST /api/v1/predictions/pools/join",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"inviteCode\": \"ABC123\"\n}"
+            },
+            "url": {
+              "raw": "http://localhost:8080/api/v1/predictions/pools/join",
+              "host": [
+                "localhost:8080"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "predictions",
+                "pools",
+                "join"
+              ]
+            }
+          }
+        },
+        {
+          "name": "POST /api/v1/predictions/team",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"season\": 2026,\n  \"raceId\": 1\n}"
+            },
+            "url": {
+              "raw": "http://localhost:8080/api/v1/predictions/team",
+              "host": [
+                "localhost:8080"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "predictions",
+                "team"
+              ]
+            }
+          }
+        },
+        {
+          "name": "GET /api/v1/predictions/pools",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "http://localhost:8080/api/v1/predictions/pools",
+              "host": [
+                "localhost:8080"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "predictions",
+                "pools"
+              ]
+            }
+          }
+        },
+        {
+          "name": "GET /api/v1/predictions/pools/:poolId",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "http://localhost:8080/api/v1/predictions/pools/:poolId",
+              "host": [
+                "localhost:8080"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "predictions",
+                "pools",
+                ":poolId"
+              ]
+            }
+          }
+        },
+        {
+          "name": "GET /api/v1/predictions/pools/:poolId/team",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "http://localhost:8080/api/v1/predictions/pools/:poolId/team",
+              "host": [
+                "localhost:8080"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "predictions",
+                "pools",
+                ":poolId",
+                "team"
+              ]
+            }
+          }
+        },
+        {
+          "name": "GET /api/v1/predictions/status",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "http://localhost:8080/api/v1/predictions/status",
+              "host": [
+                "localhost:8080"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "predictions",
+                "status"
+              ]
+            }
+          }
+        },
+        {
+          "name": "GET /api/v1/predictions/team/personal",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "http://localhost:8080/api/v1/predictions/team/personal",
+              "host": [
+                "localhost:8080"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "predictions",
+                "team",
+                "personal"
+              ]
+            }
+          }
+        },
+        {
+          "name": "DELETE /api/v1/predictions/pools/:poolId",
+          "request": {
+            "method": "DELETE",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "http://localhost:8080/api/v1/predictions/pools/:poolId",
+              "host": [
+                "localhost:8080"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "predictions",
+                "pools",
+                ":poolId"
+              ]
+            }
+          }
+        },
+        {
+          "name": "DELETE /api/v1/predictions/pools/:poolId/members/:memberId",
+          "request": {
+            "method": "DELETE",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "http://localhost:8080/api/v1/predictions/pools/:poolId/members/:memberId",
+              "host": [
+                "localhost:8080"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "predictions",
+                "pools",
+                ":poolId",
+                "members",
+                ":memberId"
+              ]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Auth",
+      "item": [
+        {
+          "name": "POST /api/v1/auth/login",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"user@example.com\",\n  \"password\": \"your_password\"\n}"
+            },
+            "url": {
+              "raw": "http://localhost:8080/api/v1/auth/login",
+              "host": [
+                "localhost:8080"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "auth",
+                "login"
+              ]
+            }
+          }
+        },
+        {
+          "name": "POST /api/v1/auth/logout",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \n}"
+            },
+            "url": {
+              "raw": "http://localhost:8080/api/v1/auth/logout",
+              "host": [
+                "localhost:8080"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "auth",
+                "logout"
+              ]
+            }
+          }
+        },
+        {
+          "name": "POST /api/v1/auth/register",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"user@example.com\",\n  \"password\": \"your_password\"\n}"
+            },
+            "url": {
+              "raw": "http://localhost:8080/api/v1/auth/register",
+              "host": [
+                "localhost:8080"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "auth",
+                "register"
+              ]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Drivers",
+      "item": [
+        {
+          "name": "GET /api/v1/driver",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "http://localhost:8080/api/v1/driver",
+              "host": [
+                "localhost:8080"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "driver"
+              ]
+            }
+          }
+        },
+        {
+          "name": "GET /api/v1/drivers",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "http://localhost:8080/api/v1/drivers",
+              "host": [
+                "localhost:8080"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "drivers"
+              ]
+            }
+          }
+        },
+        {
+          "name": "GET /api/v1/drivers/lastname/:lastName",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "http://localhost:8080/api/v1/drivers/lastname/:lastName",
+              "host": [
+                "localhost:8080"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "drivers",
+                "lastname",
+                ":lastName"
+              ]
+            }
+          }
+        },
+        {
+          "name": "GET /api/v1/drivers/name/:name/career-history",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "http://localhost:8080/api/v1/drivers/name/:name/career-history",
+              "host": [
+                "localhost:8080"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "drivers",
+                "name",
+                ":name",
+                "career-history"
+              ]
+            }
+          }
+        },
+        {
+          "name": "GET /api/v1/drivers/season/:season",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "http://localhost:8080/api/v1/drivers/season/:season",
+              "host": [
+                "localhost:8080"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "drivers",
+                "season",
+                ":season"
+              ]
+            }
+          }
+        },
+        {
+          "name": "GET /api/v1/drivers/:id/race-results",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "http://localhost:8080/api/v1/drivers/:id/race-results",
+              "host": [
+                "localhost:8080"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "drivers",
+                ":id",
+                "race-results"
+              ]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Profile",
+      "item": [
+        {
+          "name": "GET /api/v1/profile",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "http://localhost:8080/api/v1/profile",
+              "host": [
+                "localhost:8080"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "profile"
+              ]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Teams",
+      "item": [
+        {
+          "name": "GET /api/v1/teams/:season",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "http://localhost:8080/api/v1/teams/:season",
+              "host": [
+                "localhost:8080"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "teams",
+                ":season"
+              ]
+            }
+          }
+        },
+        {
+          "name": "GET /api/v1/team/:name",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "http://localhost:8080/api/v1/team/:name",
+              "host": [
+                "localhost:8080"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "team",
+                ":name"
+              ]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Races",
+      "item": [
+        {
+          "name": "GET /api/v1/races/:season",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "http://localhost:8080/api/v1/races/:season",
+              "host": [
+                "localhost:8080"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "races",
+                ":season"
+              ]
+            }
+          }
+        }
+      ]
+    }
+  ]
+}

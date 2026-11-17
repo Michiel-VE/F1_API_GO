@@ -213,10 +213,6 @@ func (s *PredictionService) CreateTeamPrediction(ctx context.Context, userID uui
 			return fmt.Errorf("%w: user not found", ErrNotFound)
 		}
 
-		// Fields are assigned after construction (not in the literal) so this keeps
-		// compiling whether ID/CreatedAt/UpdatedAt are declared directly on the
-		// model or come from an embedded BaseEntry (a struct literal cannot set
-		// promoted fields).
 		now := time.Now()
 		prediction := &models.TeamPrediction{
 			User:           *user,
@@ -349,8 +345,6 @@ func (s *PredictionService) GetPredictionStatus(ctx context.Context, userID uuid
 	}, nil
 }
 
-// inviteAlphabet has 32 characters (no 0/O/1/I), so a random byte maps onto it
-// without modulo bias. Codes are 8 characters: 32^8 ≈ 10^12 combinations.
 const inviteAlphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
 
 func generateInviteCode() (string, error) {
@@ -399,24 +393,28 @@ func (s *PredictionService) CreatePool(ctx context.Context, userID uuid.UUID, re
 			return errors.New("could not generate a unique invite code")
 		}
 
-		// models.Pool embeds BaseEntry, so ID/CreatedAt/UpdatedAt cannot be set in
-		// the struct literal (this used to fail to compile); assign them afterwards.
 		now := time.Now()
 		pool := &models.Pool{
 			Name:       name,
 			InviteCode: inviteCode,
 			CreatorID:  user.ID,
 			Creator:    user,
-			Members:    []*models.User{user},
 		}
 		pool.ID = uuid.New()
 		pool.CreatedAt = now
 		pool.UpdatedAt = now
 
+		// 1. Save the pool record first without members to satisfy the foreign key
 		saved, err := s.poolRepo.Save(txCtx, pool)
 		if err != nil {
 			return err
 		}
+
+		// 2. Explicitly add the creator as a member via the association table
+		if err := s.poolRepo.AddMember(txCtx, saved.ID, user.ID); err != nil {
+			return err
+		}
+
 		created = saved
 		return nil
 	})
@@ -424,9 +422,6 @@ func (s *PredictionService) CreatePool(ctx context.Context, userID uuid.UUID, re
 	return created, err
 }
 
-// LeaveOrDeletePool: the creator (or the last member) dissolves the pool with
-// all its predictions; any other member just leaves and loses their prediction
-// in that pool. Their personal prediction is not touched.
 func (s *PredictionService) LeaveOrDeletePool(ctx context.Context, userID, poolID uuid.UUID) error {
 	return s.txManager.WithTx(ctx, func(txCtx context.Context) error {
 		pool, err := s.poolRepo.FindByID(txCtx, poolID)
@@ -449,9 +444,6 @@ func (s *PredictionService) LeaveOrDeletePool(ctx context.Context, userID, poolI
 			return s.poolRepo.Delete(txCtx, pool)
 		}
 
-		// Remove the membership row itself. The old code removed the user from the
-		// in-memory slice and saved the pool, which never deleted the membership,
-		// so "leave pool" left the user in the pool.
 		if err := s.poolRepo.RemoveMember(txCtx, poolID, userID); err != nil {
 			return err
 		}
@@ -477,7 +469,6 @@ func (s *PredictionService) KickMemberOrDeletePool(ctx context.Context, adminID,
 			return fmt.Errorf("%w: pool not found", ErrNotFound)
 		}
 
-		// A pool without a creator used to pass this check for anyone, including non-members.
 		if pool.Creator == nil || pool.Creator.ID != adminID {
 			return fmt.Errorf("%w: only the pool creator can remove members", ErrAccessDenied)
 		}
@@ -530,13 +521,10 @@ func (s *PredictionService) JoinPool(ctx context.Context, userID uuid.UUID, req 
 			return fmt.Errorf("%w: you are already a member of this pool", ErrInvalidState)
 		}
 
-		// Insert just the membership row instead of re-saving the whole pool.
 		return s.poolRepo.AddMember(txCtx, pool.ID, userID)
 	})
 }
 
-// CreatePrediction is still a stub. It used to return nil, telling the client
-// the prediction was saved when nothing was stored.
 func (s *PredictionService) CreatePrediction(ctx context.Context, id uuid.UUID, req *requests.CreatePredictionRequest) error {
 	return fmt.Errorf("%w: race predictions are not implemented yet", ErrInvalidState)
 }
