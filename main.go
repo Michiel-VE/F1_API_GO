@@ -258,6 +258,7 @@ func (a *resultRepoAdapter) Save(ctx context.Context, res *scrapers.DriverRaceRe
 		RaceID:        res.Race.ID,
 		SeasonID:      res.Season.ID,
 		Points:        res.Points,
+		SprintPoints:  res.SprintPoints, // <- this line was missing
 		LapsCompleted: &res.LapsCompleted,
 		Status:        &res.Status,
 		CreatedAt:     res.CreatedAt,
