@@ -149,3 +149,22 @@ func (r *RaceRepository) FindFirstFinishedRaceMissingResults(ctx context.Context
 	}
 	return &races[0], nil
 }
+
+func (r *RaceRepository) FindCompletedNonSprintRaces(ctx context.Context, now time.Time, year string) ([]models.Race, error) {
+	query := `
+		SELECT r.* FROM f1_api.race r
+		JOIN f1_api.race_status rs ON r.status_id = rs.id
+		JOIN f1_api.race_season rsj ON r.id = rsj.race_id
+		JOIN f1_api.season s ON rsj.season_id = s.id
+		WHERE s.season_name = ?
+		AND r.race_end_date < ?
+		AND rs.name = 'COMPLETED'
+		AND r.is_sprint = false
+		AND r.name NOT ILIKE '%TESTING%'
+		AND r.name NOT ILIKE '%PRE-SEASON%'
+		ORDER BY r.race_end_date ASC`
+
+	var races []models.Race
+	err := DBFrom(ctx, r.db).Raw(query, year, now.Add(-raceEndGrace)).Find(&races).Error
+	return races, err
+}

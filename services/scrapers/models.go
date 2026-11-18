@@ -22,6 +22,7 @@ type Race struct {
 	EndDate           time.Time
 	RaceStartDate     time.Time
 	RaceEndDate       time.Time
+	IsSprint          bool
 	Status            *RaceStatus
 	CreatedAt         time.Time
 	UpdatedAt         time.Time
@@ -100,6 +101,8 @@ type DriverRaceResultRepository interface {
 
 type RaceRepository interface {
 	FindAllFinishedRacesMissingResults(ctx context.Context, now time.Time, seasonName string) ([]models.Race, error)
+	FindFirstFinishedRaceMissingResults(ctx context.Context, now time.Time, seasonName string) (*models.Race, error)
+	FindCompletedNonSprintRaces(ctx context.Context, now time.Time, seasonName string) ([]models.Race, error)
 	FindByNameAndRaceStartDateAndRaceEndDate(ctx context.Context, name string, start, end time.Time) (*Race, error)
 	FindByRaceStartDateInSeason(ctx context.Context, seasonName string, start time.Time) (*Race, error)
 	UpdateDetails(ctx context.Context, raceID uuid.UUID, name, country string, start, end time.Time) error

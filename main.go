@@ -61,6 +61,7 @@ func toScraperRace(m *models.Race) *scrapers.Race {
 		Country:       m.Country,
 		RaceStartDate: m.RaceStartDate,
 		RaceEndDate:   m.RaceEndDate,
+		IsSprint:      m.IsSprint,
 		CreatedAt:     m.CreatedAt,
 		UpdatedAt:     m.UpdatedAt,
 	}
@@ -68,6 +69,14 @@ func toScraperRace(m *models.Race) *scrapers.Race {
 
 func (a *raceRepoAdapter) FindAllFinishedRacesMissingResults(ctx context.Context, now time.Time, season string) ([]models.Race, error) {
 	return a.repo.FindAllFinishedRacesMissingResults(ctx, now, season)
+}
+
+func (a *raceRepoAdapter) FindFirstFinishedRaceMissingResults(ctx context.Context, now time.Time, season string) (*models.Race, error) {
+	return a.repo.FindFirstFinishedRaceMissingResults(ctx, now, season)
+}
+
+func (a *raceRepoAdapter) FindCompletedNonSprintRaces(ctx context.Context, now time.Time, season string) ([]models.Race, error) {
+	return a.repo.FindCompletedNonSprintRaces(ctx, now, season)
 }
 
 func (a *raceRepoAdapter) FindByNameAndRaceStartDateAndRaceEndDate(ctx context.Context, name string, start, end time.Time) (*scrapers.Race, error) {
@@ -101,6 +110,7 @@ func (a *raceRepoAdapter) Save(ctx context.Context, r *scrapers.Race) (*scrapers
 		Country:       r.Country,
 		RaceStartDate: r.RaceStartDate,
 		RaceEndDate:   r.RaceEndDate,
+		IsSprint:      r.IsSprint,
 		CreatedAt:     r.CreatedAt,
 		UpdatedAt:     r.UpdatedAt,
 	}
@@ -152,8 +162,6 @@ func toScraperTeams(teams []models.Team) []*scrapers.Team {
 	res := make([]*scrapers.Team, 0, len(teams))
 	for i := range teams {
 		t := teams[i]
-		// CreatedAt/UpdatedAt must be copied: the scraper saves these structs
-		// back, and a zero created_at would otherwise overwrite the real one.
 		res = append(res, &scrapers.Team{
 			ID: t.ID, Name: t.Name, ShortName: t.ShortName, Country: t.Country, Base: t.Base,
 			CreatedAt: t.CreatedAt, UpdatedAt: t.UpdatedAt,
@@ -258,7 +266,7 @@ func (a *resultRepoAdapter) Save(ctx context.Context, res *scrapers.DriverRaceRe
 		RaceID:        res.Race.ID,
 		SeasonID:      res.Season.ID,
 		Points:        res.Points,
-		SprintPoints:  res.SprintPoints, // <- this line was missing
+		SprintPoints:  res.SprintPoints,
 		LapsCompleted: &res.LapsCompleted,
 		Status:        &res.Status,
 		CreatedAt:     res.CreatedAt,
@@ -301,9 +309,7 @@ func openDB() (*gorm.DB, error) {
 		DSN:                  config.AppCfg.DatabaseURL,
 		PreferSimpleProtocol: true,
 	}), &gorm.Config{
-		PrepareStmt: false,
-		// Turns unique-constraint violations into gorm.ErrDuplicatedKey so the
-		// repositories can return a friendly "already exists" error.
+		PrepareStmt:    false,
 		TranslateError: true,
 	})
 	if err != nil {
@@ -338,7 +344,6 @@ func main() {
 
 	runMode := os.Getenv("RUN_MODE")
 	if runMode != "" {
-		// A Redis problem must never stop a scraper, it only means no eviction.
 		if redisErr != nil {
 			log.Printf("WARN: Redis unavailable, caches will not be evicted after scraping: %v", redisErr)
 			redisClient = nil
@@ -442,9 +447,6 @@ func main() {
 	}
 }
 
-// cachesToEvict lists the Redis cache regions each scraper invalidates. Before,
-// nothing ever evicted them and entries had no TTL, so the API kept serving
-// whatever it cached first.
 var cachesToEvict = map[string][]string{
 	"scraper-race":        {"races", "races_hist"},
 	"scraper-driver-team": {"teams", "teams_hist"},
@@ -453,9 +455,6 @@ var cachesToEvict = map[string][]string{
 	"scraper-race-result": {"results", "results_hist"},
 }
 
-// runScraper runs a scraper mode and then evicts the caches it affects. It
-// evicts even when the run reported errors, because a partially failed run may
-// still have changed data.
 func runScraper(ctx context.Context, db *gorm.DB, redisClient *redis.Client, runMode string) error {
 	runErr := executeRunMode(ctx, db, runMode)
 
@@ -469,9 +468,6 @@ func runScraper(ctx context.Context, db *gorm.DB, redisClient *redis.Client, run
 	return runErr
 }
 
-// seasonsToProcess returns the current season, plus the previous one in
-// January/February: the last race's result page and the final standings can
-// appear after 1 January, when "current year" has already rolled over.
 func seasonsToProcess(now time.Time) []string {
 	years := []string{strconv.Itoa(now.Year())}
 	if now.Month() <= time.February {
@@ -480,8 +476,6 @@ func seasonsToProcess(now time.Time) []string {
 	return years
 }
 
-// forEachSeason runs fn per season and joins the errors. A previous season that
-// simply isn't in the database is skipped rather than reported as a failure.
 func forEachSeason(years []string, fn func(year string) error) error {
 	var errs []error
 	for i, year := range years {
@@ -523,8 +517,6 @@ func executeRunMode(ctx context.Context, db *gorm.DB, runMode string) error {
 		return teamScraper.UpdateTeamsFromScraper(ctx)
 
 	case "scraper-driver":
-		// New, opt-in mode: this scraper existed but was never wired to any
-		// RUN_MODE, so drivers were never created/updated automatically.
 		driverScraper := scrapers.NewScrapedDriverService(
 			&driverRepoAdapter{repo: repository.NewDriverRepository(db)},
 			nil,

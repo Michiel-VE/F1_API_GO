@@ -152,14 +152,11 @@ func (s *ScrapedDriverService) UpdateDriversFromScraper(ctx context.Context) err
 
 		existing, err := s.driverRepository.FindByFirstNameAndLastNameIgnoreCase(ctx, scraped.Firstname, scraped.Lastname)
 		if err != nil {
-			// A lookup error is not "not found": inserting here would create a duplicate.
 			s.logger.Error("Driver lookup failed", slog.String("name", name), slog.String("error", err.Error()))
 			errs = append(errs, fmt.Errorf("lookup %q: %w", name, err))
 			continue
 		}
 		if existing == nil && len(scraped.DriverCode) == 3 {
-			// Names can differ slightly between F1.com and our DB (accents, middle names);
-			// the code is a safer second key than creating a duplicate driver.
 			if existing, err = s.driverRepository.FindByDriverCode(ctx, scraped.DriverCode); err != nil {
 				s.logger.Error("Driver lookup by code failed", slog.String("code", scraped.DriverCode), slog.String("error", err.Error()))
 				errs = append(errs, fmt.Errorf("lookup code %q: %w", scraped.DriverCode, err))
@@ -177,7 +174,6 @@ func (s *ScrapedDriverService) UpdateDriversFromScraper(ctx context.Context) err
 			continue
 		}
 
-		// Only overwrite with non-empty scraped values: a partial scrape must never blank out good data.
 		changed := false
 		setString := func(dst *string, value string) {
 			if value != "" && *dst != value {
@@ -217,6 +213,9 @@ func (s *ScrapedDriverService) UpdateDriversFromScraper(ctx context.Context) err
 }
 
 func (s *ScrapedDriverService) parseBirthday(dateStr string) *time.Time {
+	if dateStr == "" {
+		return nil
+	}
 	t, err := time.Parse("02/01/2006", dateStr)
 	if err != nil {
 		s.logger.Warn("Failed to parse birthday", slog.String("dateStr", dateStr), slog.String("error", err.Error()))
@@ -225,9 +224,6 @@ func (s *ScrapedDriverService) parseBirthday(dateStr string) *time.Time {
 	return &t
 }
 
-// getDriverCode builds the 3-letter code from the surname with accents removed
-// and spaces dropped: "Pérez" -> PER, "Hülkenberg" -> HUL, "de Vries" -> DEV.
-// The old byte slice gave "PÉ" / "HÜ" / "DE ", which never matched F1.com's codes.
 func (s *ScrapedDriverService) getDriverCode(lastname string) string {
 	folded := strings.ReplaceAll(normalizeText(lastname), " ", "")
 	if len(folded) < 3 {

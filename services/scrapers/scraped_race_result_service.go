@@ -76,6 +76,11 @@ func (s *ScrapedRaceResultService) UpdatePendingRaceResults(ctx context.Context,
 		return fmt.Errorf("%w: %s", ErrSeasonNotFound, year)
 	}
 
+	// Backfill any already-recorded races that haven't been flagged as sprint weekends yet
+	if err := s.BackfillSprintFlags(ctx, year); err != nil {
+		s.logger.Warn("Failed to backfill sprint flags", slog.String("error", err.Error()))
+	}
+
 	pendingModelRaces, err := s.raceRepository.FindAllFinishedRacesMissingResults(ctx, now, year)
 	if err != nil {
 		return fmt.Errorf("failed to look up races missing results: %w", err)
@@ -98,6 +103,10 @@ func (s *ScrapedRaceResultService) UpdatePendingRaceResults(ctx context.Context,
 			Country:       m.Country,
 			RaceStartDate: m.RaceStartDate,
 			RaceEndDate:   m.RaceEndDate,
+			IsSprint:      m.IsSprint,
+			Status:        &RaceStatus{ID: m.StatusID},
+			CreatedAt:     m.CreatedAt,
+			UpdatedAt:     m.UpdatedAt,
 		})
 	}
 
@@ -155,6 +164,53 @@ func (s *ScrapedRaceResultService) UpdatePendingRaceResults(ctx context.Context,
 	}
 
 	return errors.Join(errs...)
+}
+
+func (s *ScrapedRaceResultService) BackfillSprintFlags(ctx context.Context, year string) error {
+	nonSprintModelRaces, err := s.raceRepository.FindCompletedNonSprintRaces(ctx, time.Now(), year)
+	if err != nil || len(nonSprintModelRaces) == 0 {
+		return err
+	}
+
+	discovered, err := s.discoverRaceResults(ctx, year)
+	if err != nil {
+		return err
+	}
+
+	used := make(map[string]struct{})
+	for _, m := range nonSprintModelRaces {
+		race := &Race{
+			ID:            m.ID,
+			Name:          m.Name,
+			Country:       m.Country,
+			RaceStartDate: m.RaceStartDate,
+			RaceEndDate:   m.RaceEndDate,
+			IsSprint:      m.IsSprint,
+			Status:        &RaceStatus{ID: m.StatusID},
+			CreatedAt:     m.CreatedAt,
+			UpdatedAt:     m.UpdatedAt,
+		}
+
+		match, _, ok := matchRace(discovered, race, used)
+		if !ok {
+			continue
+		}
+		used[match.url] = struct{}{}
+
+		sprintUrl := strings.Replace(match.url, "/race-result", "/sprint-results", 1)
+		sprintPointsMap := s.scrapeSprintPoints(ctx, sprintUrl)
+
+		if len(sprintPointsMap) > 0 {
+			s.logger.Info("Discovered missed sprint weekend, updating is_sprint flag", slog.String("race", race.Name))
+			race.IsSprint = true
+			race.UpdatedAt = time.Now()
+
+			if _, err := s.raceRepository.Save(ctx, race); err != nil {
+				s.logger.Error("Failed to update is_sprint flag for race", slog.String("race", race.Name), slog.String("error", err.Error()))
+			}
+		}
+	}
+	return nil
 }
 
 func isStaleRace(race *Race, now time.Time) bool {
@@ -253,6 +309,15 @@ func (s *ScrapedRaceResultService) ScrapeAndPersistRaceResult(ctx context.Contex
 	sprintPointsMap := s.scrapeSprintPoints(ctx, sprintUrl)
 
 	return s.txManager.WithTx(ctx, func(txCtx context.Context) error {
+		if len(sprintPointsMap) > 0 && !race.IsSprint {
+			race.IsSprint = true
+			race.UpdatedAt = time.Now()
+
+			if _, err := s.raceRepository.Save(txCtx, race); err != nil {
+				return fmt.Errorf("updating race is_sprint flag: %w", err)
+			}
+		}
+
 		var saved, existing, skipped int
 		var rowErr error
 
