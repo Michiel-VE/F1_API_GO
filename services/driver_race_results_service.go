@@ -61,6 +61,7 @@ func (s *DriverRaceResultsService) GetDriverRaceResults(ctx context.Context, dri
 			RaceName:      raceName,
 			Points:        res.Points,
 			SprintPoints:  res.SprintPoints,
+			IsSprint:      res.Race.IsSprint,
 			LapsCompleted: lapsPtr,
 			Status:        status,
 		})

@@ -22,6 +22,7 @@ type RaceResultDTO struct {
 	RaceName      string  `json:"raceName"`
 	Points        float64 `json:"points"`
 	SprintPoints  float64 `json:"sprintPoints"`
+	IsSprint      bool    `json:"isSprint"`
 	Status        string  `json:"status"`
 	LapsCompleted *int    `json:"lapsCompleted,omitempty"`
 }
