@@ -85,6 +85,11 @@ func (s *ScrapedRaceResultService) UpdatePendingRaceResults(ctx context.Context,
 		return nil
 	}
 
+	discovered, err := s.discoverRaceResults(ctx, year)
+	if err != nil {
+		return fmt.Errorf("failed to discover race result pages: %w", err)
+	}
+
 	pendingRaces := make([]Race, 0, len(pendingModelRaces))
 	for _, m := range pendingModelRaces {
 		pendingRaces = append(pendingRaces, Race{
@@ -94,11 +99,6 @@ func (s *ScrapedRaceResultService) UpdatePendingRaceResults(ctx context.Context,
 			RaceStartDate: m.RaceStartDate,
 			RaceEndDate:   m.RaceEndDate,
 		})
-	}
-
-	discovered, err := s.discoverRaceResults(ctx, year)
-	if err != nil {
-		return fmt.Errorf("failed to discover race result pages: %w", err)
 	}
 
 	var (
@@ -249,7 +249,6 @@ func (s *ScrapedRaceResultService) ScrapeAndPersistRaceResult(ctx context.Contex
 		return fmt.Errorf("no result rows found at %s - page layout may have changed", resultUrl)
 	}
 
-	// Also check if a sprint result URL exists for this weekend
 	sprintUrl := strings.Replace(resultUrl, "/race-result", "/sprint-results", 1)
 	sprintPointsMap := s.scrapeSprintPoints(ctx, sprintUrl)
 
@@ -294,21 +293,20 @@ func (s *ScrapedRaceResultService) ScrapeAndPersistRaceResult(ctx context.Contex
 	})
 }
 
-// scrapeSprintPoints checks if a sprint URL exists and extracts points per driver code
 func (s *ScrapedRaceResultService) scrapeSprintPoints(ctx context.Context, sprintUrl string) map[string]float64 {
 	pointsMap := make(map[string]float64)
-	doc, err := s.fetcher.fetchDocument(ctx, sprintUrl)
+
+	sprintDoc, err := s.fetcher.fetchDocument(ctx, sprintUrl)
 	if err != nil {
-		// Sprint page may not exist for non-sprint weekends, which is completely normal
 		return pointsMap
 	}
 
-	rows := doc.Find("table tbody tr")
-	if rows.Length() == 0 {
+	sprintRows := sprintDoc.Find("table tbody tr")
+	if sprintRows.Length() == 0 {
 		return pointsMap
 	}
 
-	rows.Each(func(i int, row *goquery.Selection) {
+	sprintRows.Each(func(i int, row *goquery.Selection) {
 		cells := row.Find("td")
 		if cells.Length() < 7 {
 			return
@@ -320,6 +318,7 @@ func (s *ScrapedRaceResultService) scrapeSprintPoints(ctx context.Context, sprin
 		pts, err := parsePoints(cells.Eq(6).Text())
 		if err == nil && pts > 0 {
 			pointsMap[driverCode] = pts
+			s.logger.Info("Parsed sprint points", slog.String("driver", driverCode), slog.Float64("points", pts))
 		}
 	})
 

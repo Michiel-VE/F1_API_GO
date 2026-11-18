@@ -42,3 +42,17 @@ func (r *DriverRaceResultRepository) FindByDriverIDAndSeason(ctx context.Context
 		Find(&results).Error
 	return results, err
 }
+
+func (r *DriverRaceResultRepository) HasNonZeroSprintPointsForRace(ctx context.Context, race *models.Race, season *models.Season) (bool, error) {
+	var count int64
+	err := DBFrom(ctx, r.db).Model(&models.DriverRaceResult{}).
+		Where("race_id = ? AND season_id = ? AND sprint_points > 0", race.ID, season.ID).
+		Count(&count).Error
+	return count > 0, err
+}
+
+func (r *DriverRaceResultRepository) UpdateSprintPoints(ctx context.Context, driver *models.Driver, race *models.Race, season *models.Season, sprintPoints float64) error {
+	return DBFrom(ctx, r.db).Model(&models.DriverRaceResult{}).
+		Where("driver_id = ? AND race_id = ? AND season_id = ?", driver.ID, race.ID, season.ID).
+		Update("sprint_points", sprintPoints).Error
+}
