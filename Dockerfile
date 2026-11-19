@@ -26,8 +26,9 @@ RUN chmod 0755 /var/task/bootstrap
 ENV PORT=8080
 ENV AWS_LWA_PORT=8080
 
-# Run as a non-root user (also satisfies container static analysis checks)
-RUN useradd --system --no-create-home --shell /sbin/nologin appuser
-USER appuser
+# Create a non-root system user without extra packages on minimal AL2023
+RUN echo "appuser:x:1000:1000:appuser:/var/task:/sbin/nologin" >> /etc/passwd \
+  && echo "appuser:x:1000:" >> /etc/group
+USER 1000:1000
 
 CMD ["/var/task/bootstrap"]
