@@ -10,6 +10,8 @@ import (
 	"strings"
 	"time"
 
+	"f1-api-go/internal/models"
+
 	"github.com/PuerkitoBio/goquery"
 	"github.com/google/uuid"
 )
@@ -59,10 +61,21 @@ func NewScrapedRaceResultService(
 var driverCodePattern = regexp.MustCompile(`([A-Z]{3})$`)
 var raceResultUrlPattern = regexp.MustCompile(`/races/\d+/([a-z0-9-]+)/race-result`)
 
+func isCancelledRaceName(name string) bool {
+	upper := strings.ToUpper(strings.TrimSpace(name))
+	return strings.HasPrefix(upper, "CALLED OFF") ||
+		strings.Contains(upper, "CANCELLED") ||
+		strings.Contains(upper, "CANCELED")
+}
+
 func (s *ScrapedRaceResultService) UpdatePendingRaceResults(ctx context.Context, year string) error {
 	s.logger.Info("Syncing completed race results up to current date.", slog.String("year", year))
 
 	now := time.Now()
+
+	if err := s.raceRepository.MarkCancelledRaces(ctx, year); err != nil {
+		s.logger.Error("Failed to mark cancelled races", slog.String("error", err.Error()))
+	}
 
 	if err := s.raceRepository.UpdatePastScheduledRacesToCompleted(ctx, now, year); err != nil {
 		s.logger.Error("Failed to update past scheduled races to completed", slog.String("error", err.Error()))
@@ -119,6 +132,11 @@ func (s *ScrapedRaceResultService) UpdatePendingRaceResults(ctx context.Context,
 
 	for i := range pendingRaces {
 		race := &pendingRaces[i]
+
+		if isCancelledRaceName(race.Name) {
+			s.logger.Info("Skipping cancelled race with no F1.com result page.", slog.String("race", race.Name))
+			continue
+		}
 
 		match, method, ok := matchRace(discovered, race, used)
 		if !ok {
@@ -416,7 +434,20 @@ func (s *ScrapedRaceResultService) parseAndSaveRow(ctx context.Context, row *goq
 		return rowSkipped, "", fmt.Errorf("driver lookup failed for code %q: %w", driverCode, err)
 	}
 	if driver == nil {
-		return rowSkipped, "", fmt.Errorf("no driver in the database with driver_code %q", driverCode)
+		// Auto-create missing historical driver on-the-fly if not found in DB
+		now := time.Now()
+		driver = &models.Driver{
+			ID:         uuid.New(),
+			DriverCode: driverCode,
+			Firstname:  driverCode,
+			Lastname:   driverCode,
+			CreatedAt:  now,
+			UpdatedAt:  now,
+		}
+		if err := s.driverRepository.Save(ctx, driver); err != nil {
+			return rowSkipped, "", fmt.Errorf("failed to auto-create historical driver for code %q: %w", driverCode, err)
+		}
+		s.logger.Info("Auto-created missing historical driver from race result", slog.String("code", driverCode))
 	}
 
 	exists, err := s.driverRaceResultRepository.ExistsByDriverAndRaceAndSeason(ctx, driver, race, season)

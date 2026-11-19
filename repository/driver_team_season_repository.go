@@ -36,6 +36,23 @@ func (r *DriverTeamSeasonRepository) FindByDriverAndSeasonAndTeam(ctx context.Co
 	return &dts, nil
 }
 
+// FindByDriverAndSeason returns (nil, nil) when no row exists for the driver
+// and season regardless of team_id, allowing callers to reconcile team_id
+// and season team name updates without inserting duplicates.
+func (r *DriverTeamSeasonRepository) FindByDriverAndSeason(ctx context.Context, driverID, seasonID uuid.UUID) (*models.DriverTeamSeason, error) {
+	var dts models.DriverTeamSeason
+	err := DBFrom(ctx, r.db).
+		Where("driver_id = ? AND season_id = ?", driverID, seasonID).
+		First(&dts).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &dts, nil
+}
+
 func (r *DriverTeamSeasonRepository) Save(ctx context.Context, dts *models.DriverTeamSeason) error {
 	return DBFrom(ctx, r.db).Save(dts).Error
 }
@@ -94,8 +111,8 @@ func (r *DriverTeamSeasonRepository) FindAllTeamsBySeasonName(ctx context.Contex
 	query := `
 		SELECT
 			t.id,
-			t.name,
-			t.short_name,
+			COALESCE(NULLIF(MAX(dts.season_team_name), ''), t.name) AS name,
+			COALESCE(NULLIF(MAX(dts.season_short_name), ''), t.short_name) AS short_name,
 			t.country,
 			t.base,
 			t.created_at,

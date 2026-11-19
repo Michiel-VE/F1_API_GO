@@ -37,6 +37,20 @@ func (r *RaceRepository) FindAllRacesBySeasonName(ctx context.Context, seasonNam
 	return races, err
 }
 
+func (r *RaceRepository) FindByName(ctx context.Context, name string) (*models.Race, error) {
+	var race models.Race
+	err := DBFrom(ctx, r.db).
+		Where("name = ?", name).
+		First(&race).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &race, nil
+}
+
 func (r *RaceRepository) FindByNameAndRaceStartDateAndRaceEndDate(ctx context.Context, name string, startDate, endDate time.Time) (*models.Race, error) {
 	var race models.Race
 	err := DBFrom(ctx, r.db).
@@ -102,6 +116,26 @@ func (r *RaceRepository) Save(ctx context.Context, race *models.Race) error {
 	return DBFrom(ctx, r.db).Save(race).Error
 }
 
+func (r *RaceRepository) MarkCancelledRaces(ctx context.Context, year string) error {
+	query := `
+		UPDATE f1_api.race
+		SET status_id = (SELECT id FROM f1_api.race_status WHERE name = 'CANCELLED'),
+			updated_at = NOW()
+		WHERE id IN (
+			SELECT r.id FROM f1_api.race r
+			JOIN f1_api.race_season rsj ON r.id = rsj.race_id
+			JOIN f1_api.season s ON rsj.season_id = s.id
+			WHERE s.season_name = ?
+			AND (
+				r.name ILIKE 'CALLED OFF%'
+				OR r.name ILIKE '%CANCELLED%'
+				OR r.name ILIKE '%CANCELED%'
+			)
+		)`
+
+	return DBFrom(ctx, r.db).Exec(query, year).Error
+}
+
 func (r *RaceRepository) UpdatePastScheduledRacesToCompleted(ctx context.Context, now time.Time, year string) error {
 	query := `
 		UPDATE f1_api.race
@@ -115,6 +149,9 @@ func (r *RaceRepository) UpdatePastScheduledRacesToCompleted(ctx context.Context
 			WHERE s.season_name = ?
 			AND r.race_end_date < ?
 			AND rs.name = 'SCHEDULED'
+			AND r.name NOT ILIKE 'CALLED OFF%'
+			AND r.name NOT ILIKE '%CANCELLED%'
+			AND r.name NOT ILIKE '%CANCELED%'
 		)`
 
 	return DBFrom(ctx, r.db).Exec(query, year, now.Add(-raceEndGrace)).Error
@@ -131,6 +168,9 @@ func (r *RaceRepository) FindAllFinishedRacesMissingResults(ctx context.Context,
 		AND rs.name = 'COMPLETED'
 		AND r.name NOT ILIKE '%TESTING%'
 		AND r.name NOT ILIKE '%PRE-SEASON%'
+		AND r.name NOT ILIKE 'CALLED OFF%'
+		AND r.name NOT ILIKE '%CANCELLED%'
+		AND r.name NOT ILIKE '%CANCELED%'
 		AND NOT EXISTS (
 			SELECT 1 FROM f1_api.driver_race_result drr
 			WHERE drr.race_id = r.id
@@ -162,6 +202,9 @@ func (r *RaceRepository) FindCompletedNonSprintRaces(ctx context.Context, now ti
 		AND r.is_sprint = false
 		AND r.name NOT ILIKE '%TESTING%'
 		AND r.name NOT ILIKE '%PRE-SEASON%'
+		AND r.name NOT ILIKE 'CALLED OFF%'
+		AND r.name NOT ILIKE '%CANCELLED%'
+		AND r.name NOT ILIKE '%CANCELED%'
 		ORDER BY r.race_end_date ASC`
 
 	var races []models.Race

@@ -29,16 +29,31 @@ const (
 type ScrapedDriverService struct {
 	driverRepository DriverRepository
 	fetcher          *pageFetcher
+	historicalLookup *historicalDriverClient
+	backfillMode     bool
+	seasonYear       string
 	logger           *slog.Logger
 }
 
 func NewScrapedDriverService(repo DriverRepository, logger *slog.Logger) *ScrapedDriverService {
+	return NewScrapedDriverServiceWithOptions(repo, false, "", logger)
+}
+
+func NewScrapedDriverServiceWithOptions(
+	repo DriverRepository,
+	backfillMode bool,
+	seasonYear string,
+	logger *slog.Logger,
+) *ScrapedDriverService {
 	if logger == nil {
 		logger = slog.Default()
 	}
 	return &ScrapedDriverService{
 		driverRepository: repo,
 		fetcher:          newPageFetcher(15*time.Second, logger),
+		historicalLookup: newHistoricalDriverClient(logger),
+		backfillMode:     backfillMode,
+		seasonYear:       strings.TrimSpace(seasonYear),
 		logger:           logger,
 	}
 }
@@ -140,6 +155,59 @@ func (s *ScrapedDriverService) ScrapeF1Drivers(ctx context.Context) ([]*models.D
 	return drivers, nil
 }
 
+func isSameDriverRecord(existing *models.Driver, scraped *models.Driver) bool {
+	if existing == nil || scraped == nil {
+		return false
+	}
+	if strings.EqualFold(strings.TrimSpace(existing.Firstname), strings.TrimSpace(scraped.Firstname)) &&
+		strings.EqualFold(strings.TrimSpace(existing.Lastname), strings.TrimSpace(scraped.Lastname)) {
+		return true
+	}
+	// If existing only stored a code or empty name (from an incomplete historical row),
+	// allow matching by driver code when the name doesn't conflict with another full name.
+	if scraped.DriverCode != "" && strings.EqualFold(existing.DriverCode, scraped.DriverCode) {
+		if strings.TrimSpace(existing.Firstname) == "" || strings.TrimSpace(existing.Lastname) == "" {
+			return true
+		}
+	}
+	return false
+}
+
+func applyDriverUpdates(existing *models.Driver, source *models.Driver) bool {
+	changed := false
+	setString := func(dst *string, value string) {
+		trimmed := strings.TrimSpace(value)
+		if trimmed != "" && *dst != trimmed {
+			*dst = trimmed
+			changed = true
+		}
+	}
+
+	setString(&existing.Firstname, source.Firstname)
+	setString(&existing.Lastname, source.Lastname)
+	setString(&existing.Country, source.Country)
+	setString(&existing.CountryCode, source.CountryCode)
+	setString(&existing.DriverCode, source.DriverCode)
+
+	if source.Team != "" && strings.TrimSpace(existing.Team) == "" {
+		existing.Team = strings.TrimSpace(source.Team)
+		changed = true
+	} else if source.Team != "" && !strings.EqualFold(strings.TrimSpace(existing.Team), strings.TrimSpace(source.Team)) && existing.Birthday.IsZero() {
+		existing.Team = strings.TrimSpace(source.Team)
+		changed = true
+	}
+
+	if source.PermanentNumber != 0 && existing.PermanentNumber != source.PermanentNumber {
+		existing.PermanentNumber = source.PermanentNumber
+		changed = true
+	}
+	if !source.Birthday.IsZero() && !existing.Birthday.Equal(source.Birthday) {
+		existing.Birthday = source.Birthday
+		changed = true
+	}
+	return changed
+}
+
 func (s *ScrapedDriverService) UpdateDriversFromScraper(ctx context.Context) error {
 	scrapedDrivers, err := s.ScrapeF1Drivers(ctx)
 	if err != nil {
@@ -157,10 +225,14 @@ func (s *ScrapedDriverService) UpdateDriversFromScraper(ctx context.Context) err
 			continue
 		}
 		if existing == nil && len(scraped.DriverCode) == 3 {
-			if existing, err = s.driverRepository.FindByDriverCode(ctx, scraped.DriverCode); err != nil {
+			candidate, err := s.driverRepository.FindByDriverCode(ctx, scraped.DriverCode)
+			if err != nil {
 				s.logger.Error("Driver lookup by code failed", slog.String("code", scraped.DriverCode), slog.String("error", err.Error()))
 				errs = append(errs, fmt.Errorf("lookup code %q: %w", scraped.DriverCode, err))
 				continue
+			}
+			if isSameDriverRecord(candidate, scraped) {
+				existing = candidate
 			}
 		}
 
@@ -174,29 +246,7 @@ func (s *ScrapedDriverService) UpdateDriversFromScraper(ctx context.Context) err
 			continue
 		}
 
-		changed := false
-		setString := func(dst *string, value string) {
-			if value != "" && *dst != value {
-				*dst = value
-				changed = true
-			}
-		}
-		setString(&existing.Firstname, scraped.Firstname)
-		setString(&existing.Lastname, scraped.Lastname)
-		setString(&existing.Country, scraped.Country)
-		setString(&existing.CountryCode, scraped.CountryCode)
-		setString(&existing.Team, scraped.Team)
-		setString(&existing.DriverCode, scraped.DriverCode)
-		if scraped.PermanentNumber != 0 && existing.PermanentNumber != scraped.PermanentNumber {
-			existing.PermanentNumber = scraped.PermanentNumber
-			changed = true
-		}
-		if !scraped.Birthday.IsZero() && !existing.Birthday.Equal(scraped.Birthday) {
-			existing.Birthday = scraped.Birthday
-			changed = true
-		}
-
-		if !changed {
+		if !applyDriverUpdates(existing, scraped) {
 			s.logger.Debug("Driver data is the same, no update", slog.String("name", name))
 			continue
 		}
@@ -208,6 +258,56 @@ func (s *ScrapedDriverService) UpdateDriversFromScraper(ctx context.Context) err
 			continue
 		}
 		s.logger.Info("Updated driver", slog.String("name", name))
+	}
+
+	if s.backfillMode && s.historicalLookup != nil {
+		if err := s.enrichIncompleteDrivers(ctx); err != nil {
+			errs = append(errs, err)
+		}
+	}
+
+	return errors.Join(errs...)
+}
+
+func (s *ScrapedDriverService) enrichIncompleteDrivers(ctx context.Context) error {
+	allDrivers, err := s.driverRepository.FindAll(ctx)
+	if err != nil {
+		return fmt.Errorf("loading drivers for backfill enrichment failed: %w", err)
+	}
+
+	var errs []error
+	for i := range allDrivers {
+		d := &allDrivers[i]
+		if !d.Birthday.IsZero() && strings.TrimSpace(d.Firstname) != "" && strings.TrimSpace(d.Lastname) != "" {
+			continue
+		}
+
+		enriched, err := s.historicalLookup.lookup(ctx, s.seasonYear, d.DriverCode, d.Firstname, d.Lastname)
+		if err != nil {
+			s.logger.Warn("Historical driver lookup failed",
+				slog.String("driver_id", d.ID.String()),
+				slog.String("code", d.DriverCode),
+				slog.String("error", err.Error()))
+			continue
+		}
+		if enriched == nil {
+			continue
+		}
+
+		if !applyDriverUpdates(d, enriched) {
+			continue
+		}
+		d.UpdatedAt = time.Now()
+		if err := s.driverRepository.Save(ctx, d); err != nil {
+			errs = append(errs, fmt.Errorf("saving enriched driver %s: %w", d.ID, err))
+			continue
+		}
+		s.logger.Info("Enriched historical driver profile from fallback",
+			slog.String("firstname", d.Firstname),
+			slog.String("lastname", d.Lastname),
+			slog.String("code", d.DriverCode),
+			slog.String("birthday", d.Birthday.Format("2006-01-02")),
+		)
 	}
 	return errors.Join(errs...)
 }

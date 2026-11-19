@@ -237,6 +237,19 @@ func (s *ScrapedRaceService) ProcessSingleRace(ctx context.Context, scrapedRace 
 	}
 
 	if race == nil {
+		// Guard race_name_key unique constraint if an existing race row already
+		// uses this exact name with different dates or in another season.
+		race, err = s.raceRepository.FindByName(ctx, scrapedRace.Name)
+		if err != nil {
+			return fmt.Errorf("race lookup by name failed: %w", err)
+		}
+		if race != nil {
+			s.logger.Info("Existing race found by name - reusing record.",
+				slog.String("name", race.Name), slog.String("race_id", race.ID.String()))
+		}
+	}
+
+	if race == nil {
 		s.logger.Info("Race not found. Saving new race record.", slog.String("name", scrapedRace.Name))
 		now := time.Now()
 		newRace := &Race{

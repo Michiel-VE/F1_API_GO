@@ -10,6 +10,7 @@ resource "aws_api_gateway_method_settings" "all" {
   settings {
     throttling_rate_limit  = 20 # steady requests per second
     throttling_burst_limit = 50 # short bursts
+    cache_data_encrypted   = true
   }
 }
 

@@ -79,6 +79,14 @@ func (a *raceRepoAdapter) FindCompletedNonSprintRaces(ctx context.Context, now t
 	return a.repo.FindCompletedNonSprintRaces(ctx, now, season)
 }
 
+func (a *raceRepoAdapter) FindByName(ctx context.Context, name string) (*scrapers.Race, error) {
+	m, err := a.repo.FindByName(ctx, name)
+	if err != nil || m == nil {
+		return nil, err
+	}
+	return toScraperRace(m), nil
+}
+
 func (a *raceRepoAdapter) FindByNameAndRaceStartDateAndRaceEndDate(ctx context.Context, name string, start, end time.Time) (*scrapers.Race, error) {
 	m, err := a.repo.FindByNameAndRaceStartDateAndRaceEndDate(ctx, name, start, end)
 	if err != nil || m == nil {
@@ -101,6 +109,10 @@ func (a *raceRepoAdapter) UpdateDetails(ctx context.Context, raceID uuid.UUID, n
 
 func (a *raceRepoAdapter) UpdatePastScheduledRacesToCompleted(ctx context.Context, now time.Time, season string) error {
 	return a.repo.UpdatePastScheduledRacesToCompleted(ctx, now, season)
+}
+
+func (a *raceRepoAdapter) MarkCancelledRaces(ctx context.Context, year string) error {
+	return a.repo.MarkCancelledRaces(ctx, year)
 }
 
 func (a *raceRepoAdapter) Save(ctx context.Context, r *scrapers.Race) (*scrapers.Race, error) {
@@ -158,14 +170,22 @@ type teamRepoAdapter struct {
 	repo *repository.TeamRepository
 }
 
+func toScraperTeam(t models.Team) *scrapers.Team {
+	return &scrapers.Team{
+		ID:        t.ID,
+		Name:      t.Name,
+		ShortName: t.ShortName,
+		Country:   t.Country,
+		Base:      t.Base,
+		CreatedAt: t.CreatedAt,
+		UpdatedAt: t.UpdatedAt,
+	}
+}
+
 func toScraperTeams(teams []models.Team) []*scrapers.Team {
 	res := make([]*scrapers.Team, 0, len(teams))
 	for i := range teams {
-		t := teams[i]
-		res = append(res, &scrapers.Team{
-			ID: t.ID, Name: t.Name, ShortName: t.ShortName, Country: t.Country, Base: t.Base,
-			CreatedAt: t.CreatedAt, UpdatedAt: t.UpdatedAt,
-		})
+		res = append(res, toScraperTeam(teams[i]))
 	}
 	return res
 }
@@ -203,7 +223,27 @@ func (a *teamRepoAdapter) Delete(ctx context.Context, t *scrapers.Team) error {
 }
 
 type dtsRepoAdapter struct {
-	repo *repository.DriverTeamSeasonRepository
+	repo     *repository.DriverTeamSeasonRepository
+	teamRepo *repository.TeamRepository
+}
+
+func (a *dtsRepoAdapter) resolveTeam(ctx context.Context, teamID uuid.UUID, fallback *scrapers.Team) (*scrapers.Team, error) {
+	if fallback != nil && fallback.ID == teamID {
+		return fallback, nil
+	}
+	if a.teamRepo == nil {
+		return &scrapers.Team{ID: teamID}, nil
+	}
+	allTeams, err := a.teamRepo.FindAll(ctx)
+	if err != nil {
+		return nil, err
+	}
+	for i := range allTeams {
+		if allTeams[i].ID == teamID {
+			return toScraperTeam(allTeams[i]), nil
+		}
+	}
+	return &scrapers.Team{ID: teamID}, nil
 }
 
 func (a *dtsRepoAdapter) FindByDriverAndSeasonAndTeam(ctx context.Context, driver *models.Driver, season *scrapers.Season, team *scrapers.Team) (*scrapers.DriverTeamSeason, error) {
@@ -211,14 +251,42 @@ func (a *dtsRepoAdapter) FindByDriverAndSeasonAndTeam(ctx context.Context, drive
 	if err != nil || m == nil {
 		return nil, err
 	}
+	resolvedTeam, err := a.resolveTeam(ctx, m.TeamID, team)
+	if err != nil {
+		return nil, err
+	}
 	return &scrapers.DriverTeamSeason{
-		ID:        m.ID,
-		Driver:    driver,
-		Season:    season,
-		Team:      team,
-		Points:    m.Points,
-		CreatedAt: m.CreatedAt,
-		UpdatedAt: m.UpdatedAt,
+		ID:              m.ID,
+		Driver:          driver,
+		Season:          season,
+		Team:            resolvedTeam,
+		Points:          m.Points,
+		SeasonTeamName:  m.SeasonTeamName,
+		SeasonShortName: m.SeasonShortName,
+		CreatedAt:       m.CreatedAt,
+		UpdatedAt:       m.UpdatedAt,
+	}, nil
+}
+
+func (a *dtsRepoAdapter) FindByDriverAndSeason(ctx context.Context, driver *models.Driver, season *scrapers.Season) (*scrapers.DriverTeamSeason, error) {
+	m, err := a.repo.FindByDriverAndSeason(ctx, driver.ID, season.ID)
+	if err != nil || m == nil {
+		return nil, err
+	}
+	resolvedTeam, err := a.resolveTeam(ctx, m.TeamID, nil)
+	if err != nil {
+		return nil, err
+	}
+	return &scrapers.DriverTeamSeason{
+		ID:              m.ID,
+		Driver:          driver,
+		Season:          season,
+		Team:            resolvedTeam,
+		Points:          m.Points,
+		SeasonTeamName:  m.SeasonTeamName,
+		SeasonShortName: m.SeasonShortName,
+		CreatedAt:       m.CreatedAt,
+		UpdatedAt:       m.UpdatedAt,
 	}, nil
 }
 
@@ -237,13 +305,15 @@ func (a *dtsRepoAdapter) Save(ctx context.Context, dts *scrapers.DriverTeamSeaso
 	}
 
 	m := &models.DriverTeamSeason{
-		ID:        dts.ID,
-		DriverID:  dts.Driver.ID,
-		SeasonID:  dts.Season.ID,
-		TeamID:    dts.Team.ID,
-		Points:    dts.Points,
-		CreatedAt: dts.CreatedAt,
-		UpdatedAt: dts.UpdatedAt,
+		ID:              dts.ID,
+		DriverID:        dts.Driver.ID,
+		SeasonID:        dts.Season.ID,
+		TeamID:          dts.Team.ID,
+		Points:          dts.Points,
+		SeasonTeamName:  dts.SeasonTeamName,
+		SeasonShortName: dts.SeasonShortName,
+		CreatedAt:       dts.CreatedAt,
+		UpdatedAt:       dts.UpdatedAt,
 	}
 	if err := a.repo.Save(ctx, m); err != nil {
 		return nil, err
@@ -296,6 +366,10 @@ func (a *driverRepoAdapter) FindAllByLastNameIgnoreCase(ctx context.Context, las
 		res = append(res, &drivers[i])
 	}
 	return res, nil
+}
+
+func (a *driverRepoAdapter) FindAll(ctx context.Context) ([]models.Driver, error) {
+	return a.repo.FindAll(ctx)
 }
 
 func (a *driverRepoAdapter) Save(ctx context.Context, driver *models.Driver) error {
@@ -468,7 +542,10 @@ func runScraper(ctx context.Context, db *gorm.DB, redisClient *redis.Client, run
 	return runErr
 }
 
-func seasonsToProcess(now time.Time) []string {
+func seasonsToProcess(now time.Time, targetYear string) []string {
+	if targetYear != "" {
+		return []string{targetYear}
+	}
 	years := []string{strconv.Itoa(now.Year())}
 	if now.Month() <= time.February {
 		years = append(years, strconv.Itoa(now.Year()-1))
@@ -492,8 +569,15 @@ func forEachSeason(years []string, fn func(year string) error) error {
 
 func executeRunMode(ctx context.Context, db *gorm.DB, runMode string) error {
 	now := time.Now()
-	currentYear := strconv.Itoa(now.Year())
-	seasons := seasonsToProcess(now)
+
+	// Read RUN_YEAR if explicitly provided for local backfilling; otherwise fallback to current year
+	targetYear := os.Getenv("RUN_YEAR")
+	if targetYear == "" {
+		targetYear = strconv.Itoa(now.Year())
+	}
+
+	backfillMode := os.Getenv("BACKFILL") == "true"
+	seasons := seasonsToProcess(now, os.Getenv("RUN_YEAR"))
 	txMgr := repository.NewTransactionManager(db)
 
 	switch runMode {
@@ -507,7 +591,7 @@ func executeRunMode(ctx context.Context, db *gorm.DB, runMode string) error {
 			txMgr,
 			nil,
 		)
-		return raceScraper.UpdateRaceFromScraperForSeason(ctx, currentYear)
+		return raceScraper.UpdateRaceFromScraperForSeason(ctx, targetYear)
 
 	case "scraper-driver-team":
 		teamScraper := scrapers.NewScrapedTeamService(
@@ -517,19 +601,26 @@ func executeRunMode(ctx context.Context, db *gorm.DB, runMode string) error {
 		return teamScraper.UpdateTeamsFromScraper(ctx)
 
 	case "scraper-driver":
-		driverScraper := scrapers.NewScrapedDriverService(
+		driverScraper := scrapers.NewScrapedDriverServiceWithOptions(
 			&driverRepoAdapter{repo: repository.NewDriverRepository(db)},
+			backfillMode,
+			targetYear,
 			nil,
 		)
 		return driverScraper.UpdateDriversFromScraper(ctx)
 
 	case "scraper-standing":
-		standingScraper := scrapers.NewScrapedStandingService(
+		standingScraper := scrapers.NewScrapedStandingServiceWithOptions(
 			&driverRepoAdapter{repo: repository.NewDriverRepository(db)},
 			&seasonRepoAdapter{repo: repository.NewSeasonRepository(db)},
 			&teamRepoAdapter{repo: repository.NewTeamRepository(db)},
-			&dtsRepoAdapter{repo: repository.NewDriverTeamSeasonRepository(db)},
+			&dtsRepoAdapter{
+				repo:     repository.NewDriverTeamSeasonRepository(db),
+				teamRepo: repository.NewTeamRepository(db),
+			},
 			txMgr,
+			backfillMode,
+			targetYear,
 			nil,
 		)
 		return forEachSeason(seasons, func(year string) error {

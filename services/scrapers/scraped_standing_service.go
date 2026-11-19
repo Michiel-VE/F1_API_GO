@@ -30,6 +30,9 @@ type ScrapedStandingService struct {
 	driverTeamSeasonRepository DriverTeamSeasonRepository
 	txManager                  TransactionManager
 	fetcher                    *pageFetcher
+	historicalLookup           *historicalDriverClient
+	backfillMode               bool
+	seasonYear                 string
 	logger                     *slog.Logger
 }
 
@@ -39,6 +42,19 @@ func NewScrapedStandingService(
 	teamRepo TeamRepository,
 	dtsRepo DriverTeamSeasonRepository,
 	txManager TransactionManager,
+	logger *slog.Logger,
+) *ScrapedStandingService {
+	return NewScrapedStandingServiceWithOptions(driverRepo, seasonRepo, teamRepo, dtsRepo, txManager, false, "", logger)
+}
+
+func NewScrapedStandingServiceWithOptions(
+	driverRepo DriverStandingRepository,
+	seasonRepo SeasonRepository,
+	teamRepo TeamRepository,
+	dtsRepo DriverTeamSeasonRepository,
+	txManager TransactionManager,
+	backfillMode bool,
+	seasonYear string,
 	logger *slog.Logger,
 ) *ScrapedStandingService {
 	if logger == nil {
@@ -51,6 +67,9 @@ func NewScrapedStandingService(
 		driverTeamSeasonRepository: dtsRepo,
 		txManager:                  txManager,
 		fetcher:                    newPageFetcher(15*time.Second, logger),
+		historicalLookup:           newHistoricalDriverClient(logger),
+		backfillMode:               backfillMode,
+		seasonYear:                 strings.TrimSpace(seasonYear),
 		logger:                     logger,
 	}
 }
@@ -119,14 +138,14 @@ func (s *ScrapedStandingService) ScrapeF1Standings(ctx context.Context, year str
 		}
 
 		pointsText := strings.TrimSpace(cells.Eq(4).Text())
-		points, err := strconv.Atoi(pointsText)
+		pointsFloat, err := strconv.ParseFloat(pointsText, 64)
 		if err != nil {
-			// Never turn an unparseable value into 0: that would overwrite a real total.
 			skipped++
 			s.logger.Warn("Skipping standings row: bad points",
 				slog.String("driver", first+" "+last), slog.String("text", pointsText))
 			return
 		}
+		points := int(pointsFloat)
 
 		standings = append(standings, &ScrapedStanding{
 			Position:    position,
@@ -208,10 +227,6 @@ func driverCacheKey(d *ScrapedStanding) string {
 	return "name:" + strings.ToLower(d.FirstName+"|"+d.LastName)
 }
 
-// findDriver tries the driver code first (unambiguous), then first+last name,
-// and only falls back to the surname alone when it is unique in the table
-// (historical drivers share surnames, and a bare surname lookup used to return
-// an arbitrary one of them).
 func (s *ScrapedStandingService) findDriver(ctx context.Context, data *ScrapedStanding, cache map[string]*models.Driver) (*models.Driver, error) {
 	key := driverCacheKey(data)
 	if d, ok := cache[key]; ok {
@@ -243,31 +258,197 @@ func (s *ScrapedStandingService) findDriver(ctx context.Context, data *ScrapedSt
 			return nil, fmt.Errorf("ambiguous driver: %d drivers share surname %q and no driver code matched", len(matches), data.LastName)
 		}
 	}
+
+	created := false
 	if driver == nil {
-		return nil, fmt.Errorf("driver not found (code=%q)", data.DriverCode)
+		now := time.Now()
+		driver = &models.Driver{
+			ID:          uuid.New(),
+			Firstname:   data.FirstName,
+			Lastname:    data.LastName,
+			DriverCode:  data.DriverCode,
+			Country:     data.Nationality,
+			CountryCode: getCountryCode(data.Nationality),
+			Team:        data.Team,
+			CreatedAt:   now,
+			UpdatedAt:   now,
+		}
+		created = true
+	}
+
+	if s.backfillMode && s.historicalLookup != nil && (created || driver.Birthday.IsZero() || strings.TrimSpace(driver.Lastname) == "") {
+		enriched, lookupErr := s.historicalLookup.lookup(ctx, s.seasonYear, driver.DriverCode, driver.Firstname, driver.Lastname)
+		if lookupErr != nil {
+			s.logger.Warn("Fallback driver enrichment failed",
+				slog.String("driver", driver.Firstname+" "+driver.Lastname),
+				slog.String("code", driver.DriverCode),
+				slog.String("error", lookupErr.Error()))
+		} else if enriched != nil {
+			applyDriverUpdates(driver, enriched)
+			driver.UpdatedAt = time.Now()
+		}
+	}
+
+	if created {
+		if err := s.driverRepository.Save(ctx, driver); err != nil {
+			return nil, fmt.Errorf("failed to auto-create historical driver %s %s: %w", driver.Firstname, driver.Lastname, err)
+		}
+		s.logger.Info("Auto-created missing historical driver", slog.String("driver", driver.Firstname+" "+driver.Lastname), slog.String("code", driver.DriverCode))
+	} else if s.backfillMode && !driver.Birthday.IsZero() {
+		if err := s.driverRepository.Save(ctx, driver); err != nil {
+			return nil, fmt.Errorf("failed to save enriched driver %s %s: %w", driver.Firstname, driver.Lastname, err)
+		}
 	}
 
 	cache[key] = driver
 	return driver, nil
 }
 
-// matchTeam picks the team whose (non-empty) short name appears in the scraped
-// team string, preferring the longest short name so "Aston Martin Aramco
-// Mercedes" matches "Aston Martin" rather than "Mercedes".
-func matchTeam(teams []*Team, scraped string) *Team {
+// constructorKeys maps a normalized scraped team string to ordered candidate
+// team names/short names in f1_api.team. Constructor checks come before
+// engine/supplier checks so strings like "Haas Ferrari" or "Alfa Romeo Ferrari"
+// never misclassify as Ferrari.
+func constructorKeys(scraped string) []string {
 	name := strings.ToLower(strings.TrimSpace(scraped))
-	var best *Team
-	bestLen := 0
-	for _, t := range teams {
-		short := strings.ToLower(strings.TrimSpace(t.ShortName))
-		if short == "" {
-			continue // an empty short name would match every team string
+	if name == "" {
+		return nil
+	}
+
+	switch {
+	case strings.Contains(name, "haas"):
+		return []string{"tgr haas f1 team", "haas f1 team", "haas ferrari"}
+	case strings.Contains(name, "alfa romeo") || strings.Contains(name, "kick sauber") || strings.Contains(name, "sauber"):
+		return []string{
+			"audi revolut f1 team",
+			"audi",
+			"stake f1 team kick sauber",
+			"kick sauber",
+			"kick sauber ferrari",
+			"alfa romeo ferrari",
 		}
-		if strings.Contains(name, short) && len(short) > bestLen {
-			best, bestLen = t, len(short)
+	case strings.Contains(name, "aston martin") || strings.Contains(name, "racing point"):
+		return []string{
+			"aston martin aramco formula one team",
+			"aston martin",
+			"aston martin aramco mercedes",
+		}
+	case strings.Contains(name, "alpine") || strings.Contains(name, "renault"):
+		return []string{
+			"bwt alpine formula one team",
+			"alpine",
+			"alpine renault",
+		}
+	case strings.Contains(name, "toro rosso") || strings.Contains(name, "alphatauri") || strings.Contains(name, "racing bulls") || name == "rb" || strings.HasPrefix(name, "rb "):
+		return []string{
+			"visa cash app racing bulls formula one team",
+			"racing bulls",
+			"rb honda rbpt",
+			"alphatauri honda rbpt",
+			"scuderia toro rosso honda",
+			"toro rosso",
+		}
+	case strings.Contains(name, "red bull"):
+		return []string{
+			"oracle red bull racing",
+			"red bull racing",
+			"red bull racing honda rbpt",
+		}
+	case strings.Contains(name, "mclaren"):
+		return []string{
+			"mclaren mastercard f1 team",
+			"mclaren",
+			"mclaren mercedes",
+		}
+	case strings.Contains(name, "williams"):
+		return []string{
+			"atlassian williams f1 team",
+			"williams",
+			"williams mercedes",
+		}
+	case strings.Contains(name, "audi"):
+		return []string{"audi revolut f1 team", "audi"}
+	case strings.Contains(name, "cadillac"):
+		return []string{"cadillac formula 1 team", "cadillac"}
+	case strings.Contains(name, "ferrari"):
+		return []string{"scuderia ferrari hp", "ferrari"}
+	case strings.Contains(name, "mercedes"):
+		return []string{"mercedes-amg petronas formula one team", "mercedes"}
+	default:
+		return []string{name}
+	}
+}
+
+func deriveSeasonShortName(scrapedTeam string, matchedTeam *Team) string {
+	raw := strings.TrimSpace(scrapedTeam)
+	if raw == "" {
+		return matchedTeam.ShortName
+	}
+	lower := strings.ToLower(raw)
+
+	switch {
+	case strings.Contains(lower, "haas"):
+		return "Haas F1 Team"
+	case strings.Contains(lower, "alfa romeo"):
+		return "Alfa Romeo"
+	case strings.Contains(lower, "kick sauber"):
+		return "Kick Sauber"
+	case strings.Contains(lower, "sauber"):
+		return "Sauber"
+	case strings.Contains(lower, "aston martin"):
+		return "Aston Martin"
+	case strings.Contains(lower, "racing point"):
+		return "Racing Point"
+	case strings.Contains(lower, "alpine"):
+		return "Alpine"
+	case strings.Contains(lower, "renault"):
+		return "Renault"
+	case strings.Contains(lower, "toro rosso"):
+		return "Toro Rosso"
+	case strings.Contains(lower, "alphatauri"):
+		return "AlphaTauri"
+	case strings.Contains(lower, "racing bulls"):
+		return "Racing Bulls"
+	case lower == "rb" || strings.HasPrefix(lower, "rb "):
+		return "RB"
+	case strings.Contains(lower, "red bull"):
+		return "Red Bull Racing"
+	case strings.Contains(lower, "mclaren"):
+		return "McLaren"
+	case strings.Contains(lower, "williams"):
+		return "Williams"
+	case strings.Contains(lower, "audi"):
+		return "Audi"
+	case strings.Contains(lower, "cadillac"):
+		return "Cadillac"
+	case strings.Contains(lower, "ferrari"):
+		return "Ferrari"
+	case strings.Contains(lower, "mercedes"):
+		return "Mercedes"
+	default:
+		if matchedTeam.ShortName != "" {
+			return matchedTeam.ShortName
+		}
+		return raw
+	}
+}
+
+func matchTeam(teams []*Team, scraped string) *Team {
+	keys := constructorKeys(scraped)
+	if len(keys) == 0 {
+		return nil
+	}
+
+	for _, key := range keys {
+		for _, t := range teams {
+			shortCand := strings.ToLower(strings.TrimSpace(t.ShortName))
+			nameCand := strings.ToLower(strings.TrimSpace(t.Name))
+			if shortCand == key || nameCand == key {
+				return t
+			}
 		}
 	}
-	return best
+
+	return nil
 }
 
 func (s *ScrapedStandingService) ProcessSingleStanding(ctx context.Context, data *ScrapedStanding, season *Season, teams []*Team, driverCache map[string]*models.Driver) error {
@@ -281,24 +462,37 @@ func (s *ScrapedStandingService) ProcessSingleStanding(ctx context.Context, data
 		return fmt.Errorf("team not found for scraped name: %q", data.Team)
 	}
 
-	dts, err := s.driverTeamSeasonRepository.FindByDriverAndSeasonAndTeam(ctx, driver, season, matchedTeam)
+	seasonTeamName := strings.TrimSpace(data.Team)
+	if seasonTeamName == "" {
+		seasonTeamName = matchedTeam.Name
+	}
+	seasonShortName := deriveSeasonShortName(seasonTeamName, matchedTeam)
+
+	dts, err := s.driverTeamSeasonRepository.FindByDriverAndSeason(ctx, driver, season)
 	if err != nil {
-		// A lookup error must not fall through to "create": that inserts duplicates.
-		return fmt.Errorf("driver/team/season lookup failed: %w", err)
+		return fmt.Errorf("driver/season lookup failed: %w", err)
 	}
 	now := time.Now()
 
 	if dts != nil {
-		if dts.Points == data.Points {
+		teamChanged := dts.Team == nil || dts.Team.ID != matchedTeam.ID
+		pointsChanged := dts.Points != data.Points
+		nameChanged := dts.SeasonTeamName != seasonTeamName || dts.SeasonShortName != seasonShortName
+		if !teamChanged && !pointsChanged && !nameChanged {
 			return nil
 		}
-		s.logger.Info("Updating points for driver.",
+
+		s.logger.Info("Updating DTS for driver.",
 			slog.String("firstname", driver.Firstname),
 			slog.String("lastname", driver.Lastname),
 			slog.Int("old_points", dts.Points),
 			slog.Int("points", data.Points),
+			slog.String("season_team", seasonTeamName),
 		)
+		dts.Team = matchedTeam
 		dts.Points = data.Points
+		dts.SeasonTeamName = seasonTeamName
+		dts.SeasonShortName = seasonShortName
 		dts.UpdatedAt = now
 		_, err = s.driverTeamSeasonRepository.Save(ctx, dts)
 		return err
@@ -307,17 +501,19 @@ func (s *ScrapedStandingService) ProcessSingleStanding(ctx context.Context, data
 	s.logger.Info("Creating new DTS for driver.",
 		slog.String("firstname", driver.Firstname),
 		slog.String("lastname", driver.Lastname),
-		slog.String("team", matchedTeam.ShortName),
+		slog.String("team", seasonShortName),
 	)
 
 	_, err = s.driverTeamSeasonRepository.Save(ctx, &DriverTeamSeason{
-		ID:        uuid.New(),
-		Driver:    driver,
-		Season:    season,
-		Team:      matchedTeam,
-		Points:    data.Points,
-		CreatedAt: now,
-		UpdatedAt: now,
+		ID:              uuid.New(),
+		Driver:          driver,
+		Season:          season,
+		Team:            matchedTeam,
+		Points:          data.Points,
+		SeasonTeamName:  seasonTeamName,
+		SeasonShortName: seasonShortName,
+		CreatedAt:       now,
+		UpdatedAt:       now,
 	})
 	return err
 }

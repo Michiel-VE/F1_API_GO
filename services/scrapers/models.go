@@ -55,6 +55,7 @@ type ScrapedStanding struct {
 	Team        string
 	Points      int
 }
+
 type DriverRaceResult struct {
 	ID            uuid.UUID
 	Driver        *models.Driver
@@ -69,13 +70,15 @@ type DriverRaceResult struct {
 }
 
 type DriverTeamSeason struct {
-	ID        uuid.UUID
-	Driver    *models.Driver
-	Season    *Season
-	Team      *Team
-	Points    int
-	CreatedAt time.Time
-	UpdatedAt time.Time
+	ID              uuid.UUID
+	Driver          *models.Driver
+	Season          *Season
+	Team            *Team
+	Points          int
+	SeasonTeamName  string
+	SeasonShortName string
+	CreatedAt       time.Time
+	UpdatedAt       time.Time
 }
 
 type TransactionManager interface {
@@ -91,6 +94,7 @@ type TeamRepository interface {
 
 type DriverTeamSeasonRepository interface {
 	FindByDriverAndSeasonAndTeam(ctx context.Context, driver *models.Driver, season *Season, team *Team) (*DriverTeamSeason, error)
+	FindByDriverAndSeason(ctx context.Context, driver *models.Driver, season *Season) (*DriverTeamSeason, error)
 	Save(ctx context.Context, dts *DriverTeamSeason) (*DriverTeamSeason, error)
 }
 
@@ -103,10 +107,12 @@ type RaceRepository interface {
 	FindAllFinishedRacesMissingResults(ctx context.Context, now time.Time, seasonName string) ([]models.Race, error)
 	FindFirstFinishedRaceMissingResults(ctx context.Context, now time.Time, seasonName string) (*models.Race, error)
 	FindCompletedNonSprintRaces(ctx context.Context, now time.Time, seasonName string) ([]models.Race, error)
+	FindByName(ctx context.Context, name string) (*Race, error)
 	FindByNameAndRaceStartDateAndRaceEndDate(ctx context.Context, name string, start, end time.Time) (*Race, error)
 	FindByRaceStartDateInSeason(ctx context.Context, seasonName string, start time.Time) (*Race, error)
 	UpdateDetails(ctx context.Context, raceID uuid.UUID, name, country string, start, end time.Time) error
 	UpdatePastScheduledRacesToCompleted(ctx context.Context, now time.Time, seasonName string) error
+	MarkCancelledRaces(ctx context.Context, year string) error
 	Save(ctx context.Context, race *Race) (*Race, error)
 }
 
@@ -118,12 +124,14 @@ type SeasonRepository interface {
 // RaceDriverRepository is what the race-result scraper needs.
 type RaceDriverRepository interface {
 	FindByDriverCode(ctx context.Context, driverCode string) (*models.Driver, error)
+	Save(ctx context.Context, driver *models.Driver) error
 }
 
 // DriverRepository is what the driver scraper needs.
 type DriverRepository interface {
 	FindByFirstNameAndLastNameIgnoreCase(ctx context.Context, firstname, lastname string) (*models.Driver, error)
 	FindByDriverCode(ctx context.Context, driverCode string) (*models.Driver, error)
+	FindAll(ctx context.Context) ([]models.Driver, error)
 	Save(ctx context.Context, driver *models.Driver) error
 }
 
@@ -133,4 +141,5 @@ type DriverStandingRepository interface {
 	FindByDriverCode(ctx context.Context, driverCode string) (*models.Driver, error)
 	FindByFirstNameAndLastNameIgnoreCase(ctx context.Context, firstname, lastname string) (*models.Driver, error)
 	FindAllByLastNameIgnoreCase(ctx context.Context, lastname string) ([]*models.Driver, error)
+	Save(ctx context.Context, driver *models.Driver) error
 }
