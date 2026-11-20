@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"errors"
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -25,9 +26,6 @@ var (
 
 const maxPoolNameLength = 60
 
-// Repositories return (nil, nil) when nothing is found, so every call site
-// below checks both the error and the nil result before using the value.
-
 type PoolRepository interface {
 	FindByID(ctx context.Context, id uuid.UUID) (*models.Pool, error)
 	FindByUserId(ctx context.Context, userID uuid.UUID) ([]*models.Pool, error)
@@ -39,9 +37,9 @@ type PoolRepository interface {
 }
 
 type TeamPredictionRepository interface {
-	FindPersonalByUserId(ctx context.Context, userID uuid.UUID) (*models.TeamPrediction, error)
-	FindByUserIdAndPoolId(ctx context.Context, userID, poolID uuid.UUID) (*models.TeamPrediction, error)
-	FindByPoolId(ctx context.Context, poolID uuid.UUID) ([]*models.TeamPrediction, error)
+	FindPersonalByUserIdAndSeason(ctx context.Context, userID, seasonID uuid.UUID) (*models.TeamPrediction, error)
+	FindByUserIdAndPoolIdAndSeason(ctx context.Context, userID, poolID, seasonID uuid.UUID) (*models.TeamPrediction, error)
+	FindByPoolIdAndSeason(ctx context.Context, poolID, seasonID uuid.UUID) ([]*models.TeamPrediction, error)
 	Create(ctx context.Context, prediction *models.TeamPrediction) error
 	Delete(ctx context.Context, prediction *models.TeamPrediction) error
 	DeleteByPoolId(ctx context.Context, poolID uuid.UUID) error
@@ -55,6 +53,10 @@ type PredictionUserRepository interface {
 	FindByID(ctx context.Context, id uuid.UUID) (*models.User, error)
 }
 
+type PredictionSeasonRepository interface {
+	FindBySeasonName(ctx context.Context, year string) (*models.Season, error)
+}
+
 type TransactionManager interface {
 	WithTx(ctx context.Context, fn func(ctx context.Context) error) error
 }
@@ -64,6 +66,7 @@ type PredictionService struct {
 	teamPredictionRepo TeamPredictionRepository
 	teamRepo           PredictionTeamRepository
 	userRepo           PredictionUserRepository
+	seasonRepo         PredictionSeasonRepository
 	txManager          TransactionManager
 }
 
@@ -72,6 +75,7 @@ func NewPredictionService(
 	teamPredictionRepo TeamPredictionRepository,
 	teamRepo PredictionTeamRepository,
 	userRepo PredictionUserRepository,
+	seasonRepo PredictionSeasonRepository,
 	txManager TransactionManager,
 ) *PredictionService {
 	return &PredictionService{
@@ -79,8 +83,21 @@ func NewPredictionService(
 		teamPredictionRepo: teamPredictionRepo,
 		teamRepo:           teamRepo,
 		userRepo:           userRepo,
+		seasonRepo:         seasonRepo,
 		txManager:          txManager,
 	}
+}
+
+func (s *PredictionService) currentSeason(ctx context.Context) (*models.Season, error) {
+	year := strconv.Itoa(time.Now().Year())
+	season, err := s.seasonRepo.FindBySeasonName(ctx, year)
+	if err != nil {
+		return nil, err
+	}
+	if season == nil {
+		return nil, fmt.Errorf("%w: season %s not found", ErrNotFound, year)
+	}
+	return season, nil
 }
 
 func teamIDStrings(teams []models.Team) []string {
@@ -91,11 +108,13 @@ func teamIDStrings(teams []models.Team) []string {
 	return ids
 }
 
-// GetPersonalTeamPrediction returns the user's one personal prediction, or
-// ErrNotFound when they have not made one yet (the frontend should treat that
-// 404 as "show the empty prediction form").
 func (s *PredictionService) GetPersonalTeamPrediction(ctx context.Context, userID uuid.UUID) (*response.SavedPredictionResponse, error) {
-	prediction, err := s.teamPredictionRepo.FindPersonalByUserId(ctx, userID)
+	season, err := s.currentSeason(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	prediction, err := s.teamPredictionRepo.FindPersonalByUserIdAndSeason(ctx, userID, season.ID)
 	if err != nil {
 		return nil, err
 	}
@@ -119,7 +138,12 @@ func (s *PredictionService) GetPoolTeamPrediction(ctx context.Context, userID, p
 		return nil, fmt.Errorf("%w: you are not a member of this pool", ErrAccessDenied)
 	}
 
-	prediction, err := s.teamPredictionRepo.FindByUserIdAndPoolId(ctx, userID, poolID)
+	season, err := s.currentSeason(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	prediction, err := s.teamPredictionRepo.FindByUserIdAndPoolIdAndSeason(ctx, userID, poolID, season.ID)
 	if err != nil {
 		return nil, err
 	}
@@ -130,14 +154,6 @@ func (s *PredictionService) GetPoolTeamPrediction(ctx context.Context, userID, p
 	return &response.SavedPredictionResponse{PredictedTeams: teamIDStrings(prediction.PredictedTeams)}, nil
 }
 
-// CreateTeamPrediction stores a prediction. Rules:
-//   - no poolId   -> the user's personal prediction; a user can have only ONE
-//   - with poolId -> a prediction inside that pool; one per user per pool, and
-//     the user must be a member
-//
-// The "already exists" check below gives a friendly error; the unique indexes in
-// db/prediction_constraints.sql make it impossible to slip past it with two
-// simultaneous requests.
 func (s *PredictionService) CreateTeamPrediction(ctx context.Context, userID uuid.UUID, req *requests.CreateSeasonPredictionRequest) error {
 	seen := make(map[uuid.UUID]struct{}, len(req.PredictedTeams))
 	for _, id := range req.PredictedTeams {
@@ -147,11 +163,16 @@ func (s *PredictionService) CreateTeamPrediction(ctx context.Context, userID uui
 		seen[id] = struct{}{}
 	}
 
+	season, err := s.currentSeason(ctx)
+	if err != nil {
+		return err
+	}
+
 	alreadyExists := func() error {
 		if req.PoolID == nil {
-			return fmt.Errorf("%w: you already have a personal prediction", ErrInvalidState)
+			return fmt.Errorf("%w: you already have a personal prediction for the %s season", ErrInvalidState, season.SeasonName)
 		}
-		return fmt.Errorf("%w: you already submitted a prediction for this pool", ErrInvalidState)
+		return fmt.Errorf("%w: you already submitted a prediction for this pool in the %s season", ErrInvalidState, season.SeasonName)
 	}
 
 	return s.txManager.WithTx(ctx, func(txCtx context.Context) error {
@@ -175,9 +196,9 @@ func (s *PredictionService) CreateTeamPrediction(ctx context.Context, userID uui
 			err      error
 		)
 		if req.PoolID == nil {
-			existing, err = s.teamPredictionRepo.FindPersonalByUserId(txCtx, userID)
+			existing, err = s.teamPredictionRepo.FindPersonalByUserIdAndSeason(txCtx, userID, season.ID)
 		} else {
-			existing, err = s.teamPredictionRepo.FindByUserIdAndPoolId(txCtx, userID, *req.PoolID)
+			existing, err = s.teamPredictionRepo.FindByUserIdAndPoolIdAndSeason(txCtx, userID, *req.PoolID, season.ID)
 		}
 		if err != nil {
 			return err
@@ -217,6 +238,8 @@ func (s *PredictionService) CreateTeamPrediction(ctx context.Context, userID uui
 		prediction := &models.TeamPrediction{
 			User:           *user,
 			Pool:           pool,
+			SeasonID:       season.ID,
+			Season:         *season,
 			PredictedTeams: orderedTeams,
 		}
 		prediction.ID = uuid.New()
@@ -274,7 +297,12 @@ func (s *PredictionService) GetPoolDetails(ctx context.Context, userID, poolID u
 		return nil, fmt.Errorf("%w: access denied to this pool dashboard", ErrAccessDenied)
 	}
 
-	predictions, err := s.teamPredictionRepo.FindByPoolId(ctx, poolID)
+	season, err := s.currentSeason(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	predictions, err := s.teamPredictionRepo.FindByPoolIdAndSeason(ctx, poolID, season.ID)
 	if err != nil {
 		return nil, err
 	}
@@ -334,7 +362,12 @@ func (s *PredictionService) GetPredictionStatus(ctx context.Context, userID uuid
 		return nil, err
 	}
 
-	personal, err := s.teamPredictionRepo.FindPersonalByUserId(ctx, userID)
+	season, err := s.currentSeason(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	personal, err := s.teamPredictionRepo.FindPersonalByUserIdAndSeason(ctx, userID, season.ID)
 	if err != nil {
 		return nil, err
 	}
@@ -404,13 +437,11 @@ func (s *PredictionService) CreatePool(ctx context.Context, userID uuid.UUID, re
 		pool.CreatedAt = now
 		pool.UpdatedAt = now
 
-		// 1. Save the pool record first without members to satisfy the foreign key
 		saved, err := s.poolRepo.Save(txCtx, pool)
 		if err != nil {
 			return err
 		}
 
-		// 2. Explicitly add the creator as a member via the association table
 		if err := s.poolRepo.AddMember(txCtx, saved.ID, user.ID); err != nil {
 			return err
 		}
@@ -448,7 +479,12 @@ func (s *PredictionService) LeaveOrDeletePool(ctx context.Context, userID, poolI
 			return err
 		}
 
-		pred, err := s.teamPredictionRepo.FindByUserIdAndPoolId(txCtx, userID, poolID)
+		season, err := s.currentSeason(txCtx)
+		if err != nil {
+			return err
+		}
+
+		pred, err := s.teamPredictionRepo.FindByUserIdAndPoolIdAndSeason(txCtx, userID, poolID, season.ID)
 		if err != nil {
 			return err
 		}
@@ -488,7 +524,12 @@ func (s *PredictionService) KickMemberOrDeletePool(ctx context.Context, adminID,
 			return err
 		}
 
-		pred, err := s.teamPredictionRepo.FindByUserIdAndPoolId(txCtx, memberID, poolID)
+		season, err := s.currentSeason(txCtx)
+		if err != nil {
+			return err
+		}
+
+		pred, err := s.teamPredictionRepo.FindByUserIdAndPoolIdAndSeason(txCtx, memberID, poolID, season.ID)
 		if err != nil {
 			return err
 		}

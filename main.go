@@ -460,6 +460,7 @@ func main() {
 	teamRepoService := repository.NewTeamRepository(db)
 	raceRepoService := repository.NewRaceRepository(db)
 	userRepo := repository.NewUserRepository(db)
+	seasonRepo := repository.NewSeasonRepository(db)
 	driverTeamSeasonRepo := repository.NewDriverTeamSeasonRepository(db)
 	driverRaceResultRepo := repository.NewDriverRaceResultRepository(db)
 
@@ -478,6 +479,7 @@ func main() {
 		teamPredictionRepo,
 		predictionTeamRepo,
 		userRepo,
+		seasonRepo,
 		txManager,
 	)
 

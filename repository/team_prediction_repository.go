@@ -18,19 +18,11 @@ func NewTeamPredictionRepository(db *gorm.DB) *TeamPredictionRepository {
 	return &TeamPredictionRepository{db: db}
 }
 
-// The predicted teams live in f1_api.team_prediction_teams
-// (prediction_id, team_id, prediction_order). prediction_order is the rank the
-// user gave the team. gorm's many2many support knows nothing about that column:
-// it never wrote it, and reading back returned the teams in the teams table's
-// order, so the user's ranking was lost. The teams are therefore written and
-// read by hand below.
-
 type predictionTeamLink struct {
 	PredictionID uuid.UUID
 	TeamID       uuid.UUID
 }
 
-// loadPredictedTeams fills PredictedTeams (in the user's order) for every prediction.
 func loadPredictedTeams(db *gorm.DB, predictions []*models.TeamPrediction) error {
 	if len(predictions) == 0 {
 		return nil
@@ -91,13 +83,11 @@ func loadPredictedTeams(db *gorm.DB, predictions []*models.TeamPrediction) error
 	return nil
 }
 
-// FindPersonalByUserId returns the user's personal prediction (the one that is
-// not attached to a pool), or (nil, nil) when there is none.
-func (r *TeamPredictionRepository) FindPersonalByUserId(ctx context.Context, userID uuid.UUID) (*models.TeamPrediction, error) {
+func (r *TeamPredictionRepository) FindPersonalByUserIdAndSeason(ctx context.Context, userID, seasonID uuid.UUID) (*models.TeamPrediction, error) {
 	db := DBFrom(ctx, r.db)
 
 	var prediction models.TeamPrediction
-	err := db.Where("user_id = ? AND pool_id IS NULL", userID).First(&prediction).Error
+	err := db.Where("user_id = ? AND pool_id IS NULL AND season_id = ?", userID, seasonID).First(&prediction).Error
 	if errors.Is(err, gorm.ErrRecordNotFound) {
 		return nil, nil
 	}
@@ -110,11 +100,11 @@ func (r *TeamPredictionRepository) FindPersonalByUserId(ctx context.Context, use
 	return &prediction, nil
 }
 
-func (r *TeamPredictionRepository) FindByUserIdAndPoolId(ctx context.Context, userID, poolID uuid.UUID) (*models.TeamPrediction, error) {
+func (r *TeamPredictionRepository) FindByUserIdAndPoolIdAndSeason(ctx context.Context, userID, poolID, seasonID uuid.UUID) (*models.TeamPrediction, error) {
 	db := DBFrom(ctx, r.db)
 
 	var prediction models.TeamPrediction
-	err := db.Where("user_id = ? AND pool_id = ?", userID, poolID).First(&prediction).Error
+	err := db.Where("user_id = ? AND pool_id = ? AND season_id = ?", userID, poolID, seasonID).First(&prediction).Error
 	if errors.Is(err, gorm.ErrRecordNotFound) {
 		return nil, nil
 	}
@@ -127,11 +117,11 @@ func (r *TeamPredictionRepository) FindByUserIdAndPoolId(ctx context.Context, us
 	return &prediction, nil
 }
 
-func (r *TeamPredictionRepository) FindByPoolId(ctx context.Context, poolID uuid.UUID) ([]*models.TeamPrediction, error) {
+func (r *TeamPredictionRepository) FindByPoolIdAndSeason(ctx context.Context, poolID, seasonID uuid.UUID) ([]*models.TeamPrediction, error) {
 	db := DBFrom(ctx, r.db)
 
 	var predictions []*models.TeamPrediction
-	if err := db.Preload("User").Where("pool_id = ?", poolID).Find(&predictions).Error; err != nil {
+	if err := db.Preload("User").Where("pool_id = ? AND season_id = ?", poolID, seasonID).Find(&predictions).Error; err != nil {
 		return nil, err
 	}
 	if err := loadPredictedTeams(db, predictions); err != nil {
@@ -140,10 +130,6 @@ func (r *TeamPredictionRepository) FindByPoolId(ctx context.Context, poolID uuid
 	return predictions, nil
 }
 
-// Create inserts a prediction and its ranked teams. The team links are written
-// with their position (0 = the user's first pick). When the database rejects the
-// insert because the user already has such a prediction (see
-// db/prediction_constraints.sql) it returns ErrDuplicate.
 func (r *TeamPredictionRepository) Create(ctx context.Context, prediction *models.TeamPrediction) error {
 	db := DBFrom(ctx, r.db)
 
@@ -166,7 +152,6 @@ func (r *TeamPredictionRepository) Create(ctx context.Context, prediction *model
 	return nil
 }
 
-// Delete removes a prediction and its team links (the teams themselves are kept).
 func (r *TeamPredictionRepository) Delete(ctx context.Context, prediction *models.TeamPrediction) error {
 	db := DBFrom(ctx, r.db)
 	if err := db.Exec(`DELETE FROM f1_api.team_prediction_teams WHERE prediction_id = ?::uuid`, prediction.ID).Error; err != nil {
@@ -175,7 +160,6 @@ func (r *TeamPredictionRepository) Delete(ctx context.Context, prediction *model
 	return db.Delete(prediction).Error
 }
 
-// DeleteByPoolId removes every prediction of a pool (used when a pool is dissolved).
 func (r *TeamPredictionRepository) DeleteByPoolId(ctx context.Context, poolID uuid.UUID) error {
 	db := DBFrom(ctx, r.db)
 

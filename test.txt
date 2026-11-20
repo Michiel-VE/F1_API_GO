@@ -1,275 +1,205 @@
-go run scripts/backfill.go -year=2019
-1. Scraping Teams...
-2026/11/19 21:40:46 Loading local environment variables...
-2026/11/19 21:40:47 INFO Starting scrape of F1 teams.
-2026/11/19 21:40:47 INFO Found team cards to process. count=11
-2026/11/19 21:40:47 INFO Scraping for teams completed. totalParsed=11 failed=0 duration=263.1799ms
-2. Scraping Drivers...
-2026/11/19 21:40:48 Loading local environment variables...
-2026/11/19 21:40:48 INFO Starting scrape of F1 drivers.
-2026/11/19 21:40:48 INFO Found driver cards to process. count=22
-2026/11/19 21:40:48 INFO Scraping for drivers completed. totalParsed=22 failed=0 duration=402.4017ms
-3. Scraping Races...
-2026/11/19 21:40:49 Loading local environment variables...
-2026/11/19 21:40:49 INFO Starting race update for season. year=2019
-2026/11/19 21:40:49 INFO Starting scrape of F1 races year=2019
-2026/11/19 21:40:50 INFO Scraping for year completed. year=2019 totalParsed=21 skipped=0 duration=994.9621ms
+## Table `flyway_schema_history`
 
-2026/11/19 21:40:50 C:/Users/Michi/Documents/Websites/F1_API_GO/repository/season_repository.go:24 record not found
-[14.247ms] [rows:0] SELECT * FROM "f1_api"."season" WHERE season_name = '2019' ORDER BY "season"."id" LIMIT 1
-2026/11/19 21:40:50 INFO Season not found. Creating new season record. year=2019
-2026/11/19 21:40:50 INFO Processing scraped races for season. count=21 year=2019
+### Columns
 
-2026/11/19 21:40:50 C:/Users/Michi/Documents/Websites/F1_API_GO/repository/race_repository.go:58 record not found
-[17.274ms] [rows:0] SELECT * FROM "f1_api"."race" WHERE name = 'FORMULA 1 ROLEX AUSTRALIAN GRAND PRIX 2019' AND race_start_date = '2019-03-15 00:00:00' AND race_end_date = '2019-03-17 00:00:00' ORDER BY "race"."id" LIMIT 1
+| Name | Type | Constraints |
+|------|------|-------------|
+| `installed_rank` | `int4` | Primary |
+| `version` | `varchar` |  Nullable |
+| `description` | `varchar` |  |
+| `type` | `varchar` |  |
+| `script` | `varchar` |  |
+| `checksum` | `int4` |  Nullable |
+| `installed_by` | `varchar` |  |
+| `execution_time` | `int4` |  |
+| `success` | `bool` |  |
+| `installed_on` | `timestamp` |  |
 
-2026/11/19 21:40:50 C:/Users/Michi/Documents/Websites/F1_API_GO/repository/race_repository.go:44 record not found
-[11.286ms] [rows:0] SELECT * FROM "f1_api"."race" WHERE name = 'FORMULA 1 ROLEX AUSTRALIAN GRAND PRIX 2019' ORDER BY "race"."id" LIMIT 1
-2026/11/19 21:40:50 INFO Race not found. Saving new race record. name="FORMULA 1 ROLEX AUSTRALIAN GRAND PRIX 2019"
-2026/11/19 21:40:50 INFO Linking race to season. race="FORMULA 1 ROLEX AUSTRALIAN GRAND PRIX 2019" season=2019
+## Table `driver`
 
-2026/11/19 21:40:50 C:/Users/Michi/Documents/Websites/F1_API_GO/repository/race_repository.go:58 record not found
-[12.526ms] [rows:0] SELECT * FROM "f1_api"."race" WHERE name = 'FORMULA 1 GULF AIR BAHRAIN GRAND PRIX 2019' AND race_start_date = '2019-03-29 00:00:00' AND race_end_date = '2019-03-31 00:00:00' ORDER BY "race"."id" LIMIT 1
+### Columns
 
-2026/11/19 21:40:50 C:/Users/Michi/Documents/Websites/F1_API_GO/repository/race_repository.go:44 record not found
-[10.652ms] [rows:0] SELECT * FROM "f1_api"."race" WHERE name = 'FORMULA 1 GULF AIR BAHRAIN GRAND PRIX 2019' ORDER BY "race"."id" LIMIT 1
-2026/11/19 21:40:50 INFO Race not found. Saving new race record. name="FORMULA 1 GULF AIR BAHRAIN GRAND PRIX 2019"
-2026/11/19 21:40:50 INFO Linking race to season. race="FORMULA 1 GULF AIR BAHRAIN GRAND PRIX 2019" season=2019
+| Name | Type | Constraints |
+|------|------|-------------|
+| `firstname` | `varchar` |  |
+| `lastname` | `varchar` |  |
+| `permanent_number` | `int4` |  |
+| `driver_code` | `varchar` |  Unique |
+| `birthday` | `date` |  |
+| `country` | `varchar` |  |
+| `country_code` | `varchar` |  |
+| `team` | `varchar` |  |
+| `id` | `uuid` | Primary |
+| `created_at` | `timestamptz` |  |
+| `updated_at` | `timestamptz` |  |
 
-2026/11/19 21:40:50 C:/Users/Michi/Documents/Websites/F1_API_GO/repository/race_repository.go:58 record not found
-[9.269ms] [rows:0] SELECT * FROM "f1_api"."race" WHERE name = 'FORMULA 1 HEINEKEN CHINESE GRAND PRIX 2019' AND race_start_date = '2019-04-12 00:00:00' AND race_end_date = '2019-04-14 00:00:00' ORDER BY "race"."id" LIMIT 1
+## Table `race`
 
-2026/11/19 21:40:50 C:/Users/Michi/Documents/Websites/F1_API_GO/repository/race_repository.go:44 record not found
-[10.642ms] [rows:0] SELECT * FROM "f1_api"."race" WHERE name = 'FORMULA 1 HEINEKEN CHINESE GRAND PRIX 2019' ORDER BY "race"."id" LIMIT 1
-2026/11/19 21:40:50 INFO Race not found. Saving new race record. name="FORMULA 1 HEINEKEN CHINESE GRAND PRIX 2019"
-2026/11/19 21:40:50 INFO Linking race to season. race="FORMULA 1 HEINEKEN CHINESE GRAND PRIX 2019" season=2019
+### Columns
 
-2026/11/19 21:40:50 C:/Users/Michi/Documents/Websites/F1_API_GO/repository/race_repository.go:58 record not found
-[12.125ms] [rows:0] SELECT * FROM "f1_api"."race" WHERE name = 'FORMULA 1 SOCAR AZERBAIJAN GRAND PRIX 2019' AND race_start_date = '2019-04-26 00:00:00' AND race_end_date = '2019-04-28 00:00:00' ORDER BY "race"."id" LIMIT 1
+| Name | Type | Constraints |
+|------|------|-------------|
+| `name` | `varchar` |  Unique |
+| `race_start_date` | `date` |  |
+| `race_end_date` | `date` |  |
+| `id` | `uuid` | Primary |
+| `created_at` | `timestamptz` |  |
+| `updated_at` | `timestamptz` |  |
+| `country` | `text` |  |
+| `extra_info` | `text` |  Nullable |
+| `status_id` | `uuid` |  |
+| `is_sprint` | `bool` |  |
 
-2026/11/19 21:40:50 C:/Users/Michi/Documents/Websites/F1_API_GO/repository/race_repository.go:44 record not found
-[10.177ms] [rows:0] SELECT * FROM "f1_api"."race" WHERE name = 'FORMULA 1 SOCAR AZERBAIJAN GRAND PRIX 2019' ORDER BY "race"."id" LIMIT 1
-2026/11/19 21:40:50 INFO Race not found. Saving new race record. name="FORMULA 1 SOCAR AZERBAIJAN GRAND PRIX 2019"
-2026/11/19 21:40:50 INFO Linking race to season. race="FORMULA 1 SOCAR AZERBAIJAN GRAND PRIX 2019" season=2019
+## Table `season`
 
-2026/11/19 21:40:51 C:/Users/Michi/Documents/Websites/F1_API_GO/repository/race_repository.go:58 record not found
-[9.634ms] [rows:0] SELECT * FROM "f1_api"."race" WHERE name = 'FORMULA 1 EMIRATES GRAN PREMIO DE ESPAÑA 2019' AND race_start_date = '2019-05-10 00:00:00' AND race_end_date = '2019-05-12 00:00:00' ORDER BY "race"."id" LIMIT 1
+### Columns
 
-2026/11/19 21:40:51 C:/Users/Michi/Documents/Websites/F1_API_GO/repository/race_repository.go:44 record not found
-[10.049ms] [rows:0] SELECT * FROM "f1_api"."race" WHERE name = 'FORMULA 1 EMIRATES GRAN PREMIO DE ESPAÑA 2019' ORDER BY "race"."id" LIMIT 1
-2026/11/19 21:40:51 INFO Race not found. Saving new race record. name="FORMULA 1 EMIRATES GRAN PREMIO DE ESPAÑA 2019"
-2026/11/19 21:40:51 INFO Linking race to season. race="FORMULA 1 EMIRATES GRAN PREMIO DE ESPAÑA 2019" season=2019
+| Name | Type | Constraints |
+|------|------|-------------|
+| `id` | `uuid` | Primary |
+| `season_name` | `varchar` |  Unique |
+| `created_at` | `timestamptz` |  |
+| `updated_at` | `timestamptz` |  |
 
-2026/11/19 21:40:51 C:/Users/Michi/Documents/Websites/F1_API_GO/repository/race_repository.go:58 record not found
-[10.312ms] [rows:0] SELECT * FROM "f1_api"."race" WHERE name = 'FORMULA 1 GRAND PRIX DE MONACO 2019' AND race_start_date = '2019-05-23 00:00:00' AND race_end_date = '2019-05-26 00:00:00' ORDER BY "race"."id" LIMIT 1
+## Table `team`
 
-2026/11/19 21:40:51 C:/Users/Michi/Documents/Websites/F1_API_GO/repository/race_repository.go:44 record not found
-[9.496ms] [rows:0] SELECT * FROM "f1_api"."race" WHERE name = 'FORMULA 1 GRAND PRIX DE MONACO 2019' ORDER BY "race"."id" LIMIT 1
-2026/11/19 21:40:51 INFO Race not found. Saving new race record. name="FORMULA 1 GRAND PRIX DE MONACO 2019"
-2026/11/19 21:40:51 INFO Linking race to season. race="FORMULA 1 GRAND PRIX DE MONACO 2019" season=2019
+### Columns
 
-2026/11/19 21:40:51 C:/Users/Michi/Documents/Websites/F1_API_GO/repository/race_repository.go:58 record not found
-[10.604ms] [rows:0] SELECT * FROM "f1_api"."race" WHERE name = 'FORMULA 1 PIRELLI GRAND PRIX DU CANADA 2019' AND race_start_date = '2019-06-07 00:00:00' AND race_end_date = '2019-06-09 00:00:00' ORDER BY "race"."id" LIMIT 1
+| Name | Type | Constraints |
+|------|------|-------------|
+| `id` | `uuid` | Primary |
+| `name` | `varchar` |  |
+| `short_name` | `varchar` |  |
+| `country` | `varchar` |  |
+| `base` | `varchar` |  |
+| `created_at` | `timestamptz` |  |
+| `updated_at` | `timestamptz` |  |
 
-2026/11/19 21:40:51 C:/Users/Michi/Documents/Websites/F1_API_GO/repository/race_repository.go:44 record not found
-[10.204ms] [rows:0] SELECT * FROM "f1_api"."race" WHERE name = 'FORMULA 1 PIRELLI GRAND PRIX DU CANADA 2019' ORDER BY "race"."id" LIMIT 1
-2026/11/19 21:40:51 INFO Race not found. Saving new race record. name="FORMULA 1 PIRELLI GRAND PRIX DU CANADA 2019"
-2026/11/19 21:40:51 INFO Linking race to season. race="FORMULA 1 PIRELLI GRAND PRIX DU CANADA 2019" season=2019
+## Table `race_season`
 
-2026/11/19 21:40:51 C:/Users/Michi/Documents/Websites/F1_API_GO/repository/race_repository.go:58 record not found
-[11.906ms] [rows:0] SELECT * FROM "f1_api"."race" WHERE name = 'FORMULA 1 PIRELLI GRAND PRIX DE FRANCE 2019' AND race_start_date = '2019-06-21 00:00:00' AND race_end_date = '2019-06-23 00:00:00' ORDER BY "race"."id" LIMIT 1
+### Columns
 
-2026/11/19 21:40:51 C:/Users/Michi/Documents/Websites/F1_API_GO/repository/race_repository.go:44 record not found
-[10.966ms] [rows:0] SELECT * FROM "f1_api"."race" WHERE name = 'FORMULA 1 PIRELLI GRAND PRIX DE FRANCE 2019' ORDER BY "race"."id" LIMIT 1
-2026/11/19 21:40:51 INFO Race not found. Saving new race record. name="FORMULA 1 PIRELLI GRAND PRIX DE FRANCE 2019"
-2026/11/19 21:40:51 INFO Linking race to season. race="FORMULA 1 PIRELLI GRAND PRIX DE FRANCE 2019" season=2019
+| Name | Type | Constraints |
+|------|------|-------------|
+| `id` | `uuid` | Primary |
+| `race_id` | `uuid` |  |
+| `season_id` | `uuid` |  |
+| `created_at` | `timestamptz` |  |
+| `updated_at` | `timestamptz` |  |
 
-2026/11/19 21:40:51 C:/Users/Michi/Documents/Websites/F1_API_GO/repository/race_repository.go:58 record not found
-[9.629ms] [rows:0] SELECT * FROM "f1_api"."race" WHERE name = 'FORMULA 1 MYWORLD GROSSER PREIS VON ÖSTERREICH 2019' AND race_start_date = '2019-06-28 00:00:00' AND race_end_date = '2019-06-30 00:00:00' ORDER BY "race"."id" LIMIT 1
+## Table `driver_team_season`
 
-2026/11/19 21:40:51 C:/Users/Michi/Documents/Websites/F1_API_GO/repository/race_repository.go:44 record not found
-[10.682ms] [rows:0] SELECT * FROM "f1_api"."race" WHERE name = 'FORMULA 1 MYWORLD GROSSER PREIS VON ÖSTERREICH 2019' ORDER BY "race"."id" LIMIT 1
-2026/11/19 21:40:51 INFO Race not found. Saving new race record. name="FORMULA 1 MYWORLD GROSSER PREIS VON ÖSTERREICH 2019"
-2026/11/19 21:40:51 INFO Linking race to season. race="FORMULA 1 MYWORLD GROSSER PREIS VON ÖSTERREICH 2019" season=2019
+### Columns
 
-2026/11/19 21:40:51 C:/Users/Michi/Documents/Websites/F1_API_GO/repository/race_repository.go:58 record not found
-[10.400ms] [rows:0] SELECT * FROM "f1_api"."race" WHERE name = 'FORMULA 1 ROLEX BRITISH GRAND PRIX 2019' AND race_start_date = '2019-07-12 00:00:00' AND race_end_date = '2019-07-14 00:00:00' ORDER BY "race"."id" LIMIT 1
+| Name | Type | Constraints |
+|------|------|-------------|
+| `id` | `uuid` | Primary |
+| `driver_id` | `uuid` |  |
+| `team_id` | `uuid` |  |
+| `season_id` | `uuid` |  |
+| `points` | `int4` |  |
+| `created_at` | `timestamptz` |  |
+| `updated_at` | `timestamptz` |  |
+| `season_team_name` | `varchar` |  Nullable |
+| `season_short_name` | `varchar` |  Nullable |
 
-2026/11/19 21:40:51 C:/Users/Michi/Documents/Websites/F1_API_GO/repository/race_repository.go:44 record not found
-[9.429ms] [rows:0] SELECT * FROM "f1_api"."race" WHERE name = 'FORMULA 1 ROLEX BRITISH GRAND PRIX 2019' ORDER BY "race"."id" LIMIT 1
-2026/11/19 21:40:51 INFO Race not found. Saving new race record. name="FORMULA 1 ROLEX BRITISH GRAND PRIX 2019"
-2026/11/19 21:40:51 INFO Linking race to season. race="FORMULA 1 ROLEX BRITISH GRAND PRIX 2019" season=2019
+## Table `users`
 
-2026/11/19 21:40:51 C:/Users/Michi/Documents/Websites/F1_API_GO/repository/race_repository.go:58 record not found
-[9.170ms] [rows:0] SELECT * FROM "f1_api"."race" WHERE name = 'FORMULA 1 MERCEDES-BENZ GROSSER PREIS VON DEUTSCHLAND 2019' AND race_start_date = '2019-07-26 00:00:00' AND race_end_date = '2019-07-28 00:00:00' ORDER BY "race"."id" LIMIT 1
+### Columns
 
-2026/11/19 21:40:51 C:/Users/Michi/Documents/Websites/F1_API_GO/repository/race_repository.go:44 record not found
-[9.619ms] [rows:0] SELECT * FROM "f1_api"."race" WHERE name = 'FORMULA 1 MERCEDES-BENZ GROSSER PREIS VON DEUTSCHLAND 2019' ORDER BY "race"."id" LIMIT 1
-2026/11/19 21:40:51 INFO Race not found. Saving new race record. name="FORMULA 1 MERCEDES-BENZ GROSSER PREIS VON DEUTSCHLAND 2019"
-2026/11/19 21:40:51 INFO Linking race to season. race="FORMULA 1 MERCEDES-BENZ GROSSER PREIS VON DEUTSCHLAND 2019" season=2019
+| Name | Type | Constraints |
+|------|------|-------------|
+| `provider` | `varchar` |  Nullable |
+| `provider_id` | `varchar` |  Nullable |
+| `email` | `varchar` |  Unique |
+| `password` | `varchar` |  Nullable |
+| `name` | `varchar` |  Nullable |
+| `role` | `varchar` |  |
+| `created_at` | `timestamptz` |  Nullable |
+| `updated_at` | `timestamptz` |  Nullable |
+| `id` | `uuid` | Primary |
+| `picture` | `varchar` |  Nullable |
 
-2026/11/19 21:40:51 C:/Users/Michi/Documents/Websites/F1_API_GO/repository/race_repository.go:58 record not found
-[11.347ms] [rows:0] SELECT * FROM "f1_api"."race" WHERE name = 'FORMULA 1 ROLEX MAGYAR NAGYDÍJ 2019' AND race_start_date = '2019-08-02 00:00:00' AND race_end_date = '2019-08-04 00:00:00' ORDER BY "race"."id" LIMIT 1
+## Table `prediction`
 
-2026/11/19 21:40:51 C:/Users/Michi/Documents/Websites/F1_API_GO/repository/race_repository.go:44 record not found
-[10.093ms] [rows:0] SELECT * FROM "f1_api"."race" WHERE name = 'FORMULA 1 ROLEX MAGYAR NAGYDÍJ 2019' ORDER BY "race"."id" LIMIT 1
-2026/11/19 21:40:51 INFO Race not found. Saving new race record. name="FORMULA 1 ROLEX MAGYAR NAGYDÍJ 2019"
-2026/11/19 21:40:51 INFO Linking race to season. race="FORMULA 1 ROLEX MAGYAR NAGYDÍJ 2019" season=2019
+### Columns
 
-2026/11/19 21:40:51 C:/Users/Michi/Documents/Websites/F1_API_GO/repository/race_repository.go:58 record not found
-[11.228ms] [rows:0] SELECT * FROM "f1_api"."race" WHERE name = 'FORMULA 1 JOHNNIE WALKER BELGIAN GRAND PRIX 2019' AND race_start_date = '2019-08-30 00:00:00' AND race_end_date = '2019-09-01 00:00:00' ORDER BY "race"."id" LIMIT 1
+| Name | Type | Constraints |
+|------|------|-------------|
+| `user_id` | `uuid` |  |
+| `race_id` | `uuid` |  |
+| `predicted_drivers` | `text` |  |
+| `points` | `int4` |  Nullable |
+| `id` | `uuid` | Primary |
+| `created_at` | `timestamp` |  |
 
-2026/11/19 21:40:51 C:/Users/Michi/Documents/Websites/F1_API_GO/repository/race_repository.go:44 record not found
-[10.169ms] [rows:0] SELECT * FROM "f1_api"."race" WHERE name = 'FORMULA 1 JOHNNIE WALKER BELGIAN GRAND PRIX 2019' ORDER BY "race"."id" LIMIT 1
-2026/11/19 21:40:51 INFO Race not found. Saving new race record. name="FORMULA 1 JOHNNIE WALKER BELGIAN GRAND PRIX 2019"
-2026/11/19 21:40:51 INFO Linking race to season. race="FORMULA 1 JOHNNIE WALKER BELGIAN GRAND PRIX 2019" season=2019
+## Table `race_status`
 
-2026/11/19 21:40:51 C:/Users/Michi/Documents/Websites/F1_API_GO/repository/race_repository.go:58 record not found
-[16.266ms] [rows:0] SELECT * FROM "f1_api"."race" WHERE name = 'FORMULA 1 GRAN PREMIO HEINEKEN D''ITALIA 2019' AND race_start_date = '2019-09-06 00:00:00' AND race_end_date = '2019-09-08 00:00:00' ORDER BY "race"."id" LIMIT 1
+### Columns
 
-2026/11/19 21:40:51 C:/Users/Michi/Documents/Websites/F1_API_GO/repository/race_repository.go:44 record not found
-[10.626ms] [rows:0] SELECT * FROM "f1_api"."race" WHERE name = 'FORMULA 1 GRAN PREMIO HEINEKEN D''ITALIA 2019' ORDER BY "race"."id" LIMIT 1
-2026/11/19 21:40:51 INFO Race not found. Saving new race record. name="FORMULA 1 GRAN PREMIO HEINEKEN D'ITALIA 2019"
-2026/11/19 21:40:52 INFO Linking race to season. race="FORMULA 1 GRAN PREMIO HEINEKEN D'ITALIA 2019" season=2019
+| Name | Type | Constraints |
+|------|------|-------------|
+| `name` | `varchar` |  Unique |
+| `id` | `uuid` | Primary |
 
-2026/11/19 21:40:52 C:/Users/Michi/Documents/Websites/F1_API_GO/repository/race_repository.go:58 record not found
-[10.631ms] [rows:0] SELECT * FROM "f1_api"."race" WHERE name = 'FORMULA 1 SINGAPORE AIRLINES SINGAPORE GRAND PRIX 2019' AND race_start_date = '2019-09-20 00:00:00' AND race_end_date = '2019-09-22 00:00:00' ORDER BY "race"."id" LIMIT 1
+## Table `driver_race_result`
 
-2026/11/19 21:40:52 C:/Users/Michi/Documents/Websites/F1_API_GO/repository/race_repository.go:44 record not found
-[10.166ms] [rows:0] SELECT * FROM "f1_api"."race" WHERE name = 'FORMULA 1 SINGAPORE AIRLINES SINGAPORE GRAND PRIX 2019' ORDER BY "race"."id" LIMIT 1
-2026/11/19 21:40:52 INFO Race not found. Saving new race record. name="FORMULA 1 SINGAPORE AIRLINES SINGAPORE GRAND PRIX 2019"
-2026/11/19 21:40:52 INFO Linking race to season. race="FORMULA 1 SINGAPORE AIRLINES SINGAPORE GRAND PRIX 2019" season=2019
+### Columns
 
-2026/11/19 21:40:52 C:/Users/Michi/Documents/Websites/F1_API_GO/repository/race_repository.go:58 record not found
-[10.873ms] [rows:0] SELECT * FROM "f1_api"."race" WHERE name = 'FORMULA 1 VTB RUSSIAN GRAND PRIX 2019' AND race_start_date = '2019-09-27 00:00:00' AND race_end_date = '2019-09-29 00:00:00' ORDER BY "race"."id" LIMIT 1
+| Name | Type | Constraints |
+|------|------|-------------|
+| `driver_id` | `uuid` |  |
+| `race_id` | `uuid` |  |
+| `season_id` | `uuid` |  |
+| `status` | `varchar` |  Nullable |
+| `laps_completed` | `int4` |  Nullable |
+| `id` | `uuid` | Primary |
+| `points` | `numeric` |  |
+| `created_at` | `timestamptz` |  |
+| `updated_at` | `timestamptz` |  |
+| `sprint_points` | `numeric` |  |
 
-2026/11/19 21:40:52 C:/Users/Michi/Documents/Websites/F1_API_GO/repository/race_repository.go:44 record not found
-[11.041ms] [rows:0] SELECT * FROM "f1_api"."race" WHERE name = 'FORMULA 1 VTB RUSSIAN GRAND PRIX 2019' ORDER BY "race"."id" LIMIT 1
-2026/11/19 21:40:52 INFO Race not found. Saving new race record. name="FORMULA 1 VTB RUSSIAN GRAND PRIX 2019"
-2026/11/19 21:40:52 INFO Linking race to season. race="FORMULA 1 VTB RUSSIAN GRAND PRIX 2019" season=2019
+## Table `pools`
 
-2026/11/19 21:40:52 C:/Users/Michi/Documents/Websites/F1_API_GO/repository/race_repository.go:58 record not found
-[10.323ms] [rows:0] SELECT * FROM "f1_api"."race" WHERE name = 'FORMULA 1 JAPANESE GRAND PRIX 2019' AND race_start_date = '2019-10-11 00:00:00' AND race_end_date = '2019-10-13 00:00:00' ORDER BY "race"."id" LIMIT 1
+### Columns
 
-2026/11/19 21:40:52 C:/Users/Michi/Documents/Websites/F1_API_GO/repository/race_repository.go:44 record not found
-[9.469ms] [rows:0] SELECT * FROM "f1_api"."race" WHERE name = 'FORMULA 1 JAPANESE GRAND PRIX 2019' ORDER BY "race"."id" LIMIT 1
-2026/11/19 21:40:52 INFO Race not found. Saving new race record. name="FORMULA 1 JAPANESE GRAND PRIX 2019"
-2026/11/19 21:40:52 INFO Linking race to season. race="FORMULA 1 JAPANESE GRAND PRIX 2019" season=2019
+| Name | Type | Constraints |
+|------|------|-------------|
+| `id` | `uuid` | Primary |
+| `name` | `varchar` |  |
+| `invite_code` | `varchar` |  Unique |
+| `created_at` | `timestamp` |  |
+| `updated_at` | `timestamp` |  |
+| `creator_id` | `uuid` |  |
 
-2026/11/19 21:40:52 C:/Users/Michi/Documents/Websites/F1_API_GO/repository/race_repository.go:58 record not found
-[10.115ms] [rows:0] SELECT * FROM "f1_api"."race" WHERE name = 'FORMULA 1 GRAN PREMIO DE MÉXICO 2019' AND race_start_date = '2019-10-25 00:00:00' AND race_end_date = '2019-10-27 00:00:00' ORDER BY "race"."id" LIMIT 1
+## Table `pool_members`
 
-2026/11/19 21:40:52 C:/Users/Michi/Documents/Websites/F1_API_GO/repository/race_repository.go:44 record not found
-[10.141ms] [rows:0] SELECT * FROM "f1_api"."race" WHERE name = 'FORMULA 1 GRAN PREMIO DE MÉXICO 2019' ORDER BY "race"."id" LIMIT 1
-2026/11/19 21:40:52 INFO Race not found. Saving new race record. name="FORMULA 1 GRAN PREMIO DE MÉXICO 2019"
-2026/11/19 21:40:52 INFO Linking race to season. race="FORMULA 1 GRAN PREMIO DE MÉXICO 2019" season=2019
+### Columns
 
-2026/11/19 21:40:52 C:/Users/Michi/Documents/Websites/F1_API_GO/repository/race_repository.go:58 record not found
-[10.616ms] [rows:0] SELECT * FROM "f1_api"."race" WHERE name = 'FORMULA 1 EMIRATES UNITED STATES GRAND PRIX 2019' AND race_start_date = '2019-11-01 00:00:00' AND race_end_date = '2019-11-03 00:00:00' ORDER BY "race"."id" LIMIT 1
+| Name | Type | Constraints |
+|------|------|-------------|
+| `pool_id` | `uuid` | Primary |
+| `user_id` | `uuid` | Primary |
 
-2026/11/19 21:40:52 C:/Users/Michi/Documents/Websites/F1_API_GO/repository/race_repository.go:44 record not found
-[9.299ms] [rows:0] SELECT * FROM "f1_api"."race" WHERE name = 'FORMULA 1 EMIRATES UNITED STATES GRAND PRIX 2019' ORDER BY "race"."id" LIMIT 1
-2026/11/19 21:40:52 INFO Race not found. Saving new race record. name="FORMULA 1 EMIRATES UNITED STATES GRAND PRIX 2019"
-2026/11/19 21:40:52 INFO Linking race to season. race="FORMULA 1 EMIRATES UNITED STATES GRAND PRIX 2019" season=2019
+## Table `team_predictions`
 
-2026/11/19 21:40:52 C:/Users/Michi/Documents/Websites/F1_API_GO/repository/race_repository.go:58 record not found
-[10.281ms] [rows:0] SELECT * FROM "f1_api"."race" WHERE name = 'FORMULA 1 HEINEKEN GRANDE PRÊMIO DO BRASIL 2019' AND race_start_date = '2019-11-15 00:00:00' AND race_end_date = '2019-11-17 00:00:00' ORDER BY "race"."id" LIMIT 1
+### Columns
 
-2026/11/19 21:40:52 C:/Users/Michi/Documents/Websites/F1_API_GO/repository/race_repository.go:44 record not found
-[10.636ms] [rows:0] SELECT * FROM "f1_api"."race" WHERE name = 'FORMULA 1 HEINEKEN GRANDE PRÊMIO DO BRASIL 2019' ORDER BY "race"."id" LIMIT 1
-2026/11/19 21:40:52 INFO Race not found. Saving new race record. name="FORMULA 1 HEINEKEN GRANDE PRÊMIO DO BRASIL 2019"
-2026/11/19 21:40:52 INFO Linking race to season. race="FORMULA 1 HEINEKEN GRANDE PRÊMIO DO BRASIL 2019" season=2019
+| Name | Type | Constraints |
+|------|------|-------------|
+| `id` | `uuid` | Primary |
+| `user_id` | `uuid` |  |
+| `pool_id` | `uuid` |  Nullable |
+| `created_at` | `timestamp` |  |
+| `updated_at` | `timestamp` |  |
 
-2026/11/19 21:40:52 C:/Users/Michi/Documents/Websites/F1_API_GO/repository/race_repository.go:58 record not found
-[11.150ms] [rows:0] SELECT * FROM "f1_api"."race" WHERE name = 'FORMULA 1 ETIHAD AIRWAYS ABU DHABI GRAND PRIX 2019' AND race_start_date = '2019-11-29 00:00:00' AND race_end_date = '2019-12-01 00:00:00' ORDER BY "race"."id" LIMIT 1
+## Table `team_prediction_teams`
 
-2026/11/19 21:40:52 C:/Users/Michi/Documents/Websites/F1_API_GO/repository/race_repository.go:44 record not found
-[10.627ms] [rows:0] SELECT * FROM "f1_api"."race" WHERE name = 'FORMULA 1 ETIHAD AIRWAYS ABU DHABI GRAND PRIX 2019' ORDER BY "race"."id" LIMIT 1
-2026/11/19 21:40:52 INFO Race not found. Saving new race record. name="FORMULA 1 ETIHAD AIRWAYS ABU DHABI GRAND PRIX 2019"
-2026/11/19 21:40:52 INFO Linking race to season. race="FORMULA 1 ETIHAD AIRWAYS ABU DHABI GRAND PRIX 2019" season=2019
-2026/11/19 21:40:52 INFO Race update for season completed. year=2019 duration=3.4481826s
-4. Scraping Standings...
-2026/11/19 21:40:53 Loading local environment variables...
-2026/11/19 21:40:53 INFO Starting point update for season: year=2019
-2026/11/19 21:40:53 INFO Starting to scrape F1 standings for year year=2019
-2026/11/19 21:40:53 INFO Successfully scraped standings for year. year=2019 count=20 skipped=0
+### Columns
 
-2026/11/19 21:40:53 C:/Users/Michi/Documents/Websites/F1_API_GO/repository/driver_team_season_repository.go:46 record not found
-[13.992ms] [rows:0] SELECT * FROM "f1_api"."driver_team_season" WHERE driver_id = '22294d19-f2b2-4081-a741-d7da5b4a05a9' AND season_id = '7c419276-4041-409b-b4b7-bda5bd540e3b' ORDER BY "driver_team_season"."id" LIMIT 1
-2026/11/19 21:40:53 INFO Creating new DTS for driver. firstname=Lewis lastname=Hamilton team=Mercedes
+| Name | Type | Constraints |
+|------|------|-------------|
+| `prediction_id` | `uuid` | Primary |
+| `team_id` | `uuid` |  |
+| `prediction_order` | `int4` | Primary |
 
-2026/11/19 21:40:53 C:/Users/Michi/Documents/Websites/F1_API_GO/repository/driver_team_season_repository.go:46 record not found
-[11.791ms] [rows:0] SELECT * FROM "f1_api"."driver_team_season" WHERE driver_id = 'b3893f8f-b285-455f-9c8b-a40c54d8be35' AND season_id = '7c419276-4041-409b-b4b7-bda5bd540e3b' ORDER BY "driver_team_season"."id" LIMIT 1
-2026/11/19 21:40:53 INFO Creating new DTS for driver. firstname=Valtteri lastname=Bottas team=Mercedes
-
-2026/11/19 21:40:53 C:/Users/Michi/Documents/Websites/F1_API_GO/repository/driver_team_season_repository.go:46 record not found
-[10.625ms] [rows:0] SELECT * FROM "f1_api"."driver_team_season" WHERE driver_id = '29166c33-ebc9-47c8-bb67-be620514f1b9' AND season_id = '7c419276-4041-409b-b4b7-bda5bd540e3b' ORDER BY "driver_team_season"."id" LIMIT 1
-2026/11/19 21:40:53 INFO Creating new DTS for driver. firstname=Max lastname=Verstappen team="Red Bull Racing"
-
-2026/11/19 21:40:53 C:/Users/Michi/Documents/Websites/F1_API_GO/repository/driver_team_season_repository.go:46 record not found
-[10.403ms] [rows:0] SELECT * FROM "f1_api"."driver_team_season" WHERE driver_id = 'fdd9c63d-4160-48e7-96d2-37056e107d15' AND season_id = '7c419276-4041-409b-b4b7-bda5bd540e3b' ORDER BY "driver_team_season"."id" LIMIT 1
-2026/11/19 21:40:53 INFO Creating new DTS for driver. firstname=Charles lastname=Leclerc team=Ferrari
-
-2026/11/19 21:40:53 C:/Users/Michi/Documents/Websites/F1_API_GO/repository/driver_team_season_repository.go:46 record not found
-[10.224ms] [rows:0] SELECT * FROM "f1_api"."driver_team_season" WHERE driver_id = '0af85376-6637-43bf-bb39-a459d947d231' AND season_id = '7c419276-4041-409b-b4b7-bda5bd540e3b' ORDER BY "driver_team_season"."id" LIMIT 1
-2026/11/19 21:40:53 INFO Creating new DTS for driver. firstname=Sebastian lastname=Vettel team=Ferrari
-
-2026/11/19 21:40:53 C:/Users/Michi/Documents/Websites/F1_API_GO/repository/driver_team_season_repository.go:46 record not found
-[10.769ms] [rows:0] SELECT * FROM "f1_api"."driver_team_season" WHERE driver_id = '2df1c73a-0cd3-41fa-97e2-dcd3439f6a0e' AND season_id = '7c419276-4041-409b-b4b7-bda5bd540e3b' ORDER BY "driver_team_season"."id" LIMIT 1
-2026/11/19 21:40:53 INFO Creating new DTS for driver. firstname=Carlos lastname=Sainz team=Renault
-2026/11/19 21:40:53 ERROR Failed to process standing for driver driver="Pierre Gasly" code=GAS error="team not found for scraped name: \"Scuderia Toro Rosso Honda\""
-
-2026/11/19 21:40:53 C:/Users/Michi/Documents/Websites/F1_API_GO/repository/driver_team_season_repository.go:46 record not found
-[10.191ms] [rows:0] SELECT * FROM "f1_api"."driver_team_season" WHERE driver_id = '47d1f6e8-ec6b-452d-ba29-78e24ef10ea0' AND season_id = '7c419276-4041-409b-b4b7-bda5bd540e3b' ORDER BY "driver_team_season"."id" LIMIT 1
-2026/11/19 21:40:53 INFO Creating new DTS for driver. firstname=Alexander lastname=Albon team="Red Bull Racing"
-
-2026/11/19 21:40:54 C:/Users/Michi/Documents/Websites/F1_API_GO/repository/driver_team_season_repository.go:46 record not found
-[12.142ms] [rows:0] SELECT * FROM "f1_api"."driver_team_season" WHERE driver_id = '8f4ff8a0-d5f2-451e-9aa0-29452cc630ff' AND season_id = '7c419276-4041-409b-b4b7-bda5bd540e3b' ORDER BY "driver_team_season"."id" LIMIT 1
-2026/11/19 21:40:54 INFO Creating new DTS for driver. firstname=Daniel lastname=Ricciardo team=Renault
-
-2026/11/19 21:40:54 C:/Users/Michi/Documents/Websites/F1_API_GO/repository/driver_team_season_repository.go:46 record not found
-[11.358ms] [rows:0] SELECT * FROM "f1_api"."driver_team_season" WHERE driver_id = 'de690936-822c-45d4-bf0d-db98cb7b4623' AND season_id = '7c419276-4041-409b-b4b7-bda5bd540e3b' ORDER BY "driver_team_season"."id" LIMIT 1
-2026/11/19 21:40:54 INFO Creating new DTS for driver. firstname=Sergio lastname=Perez team="Racing Point"
-
-2026/11/19 21:40:54 C:/Users/Michi/Documents/Websites/F1_API_GO/repository/driver_team_season_repository.go:46 record not found
-[11.597ms] [rows:0] SELECT * FROM "f1_api"."driver_team_season" WHERE driver_id = 'ceaf2168-eb53-4854-a833-bf4f9c606b29' AND season_id = '7c419276-4041-409b-b4b7-bda5bd540e3b' ORDER BY "driver_team_season"."id" LIMIT 1
-2026/11/19 21:40:54 INFO Creating new DTS for driver. firstname=Lando lastname=Norris team=Renault
-
-2026/11/19 21:40:54 C:/Users/Michi/Documents/Websites/F1_API_GO/repository/driver_team_season_repository.go:46 record not found
-[11.545ms] [rows:0] SELECT * FROM "f1_api"."driver_team_season" WHERE driver_id = '7f012b37-8132-4db4-b8b6-a59e15c9c8ff' AND season_id = '7c419276-4041-409b-b4b7-bda5bd540e3b' ORDER BY "driver_team_season"."id" LIMIT 1
-2026/11/19 21:40:54 INFO Creating new DTS for driver. firstname=Kimi lastname=Räikkönen team="Alfa Romeo"
-2026/11/19 21:40:54 ERROR Failed to process standing for driver driver="Daniil Kvyat" code=KVY error="team not found for scraped name: \"Scuderia Toro Rosso Honda\""
-
-2026/11/19 21:40:54 C:/Users/Michi/Documents/Websites/F1_API_GO/repository/driver_team_season_repository.go:46 record not found
-[12.020ms] [rows:0] SELECT * FROM "f1_api"."driver_team_season" WHERE driver_id = '4ad25a05-2933-4da4-8d8e-547429612bf5' AND season_id = '7c419276-4041-409b-b4b7-bda5bd540e3b' ORDER BY "driver_team_season"."id" LIMIT 1
-2026/11/19 21:40:54 INFO Creating new DTS for driver. firstname=Nico lastname=Hulkenberg team=Renault
-
-2026/11/19 21:40:54 C:/Users/Michi/Documents/Websites/F1_API_GO/repository/driver_team_season_repository.go:46 record not found
-[11.555ms] [rows:0] SELECT * FROM "f1_api"."driver_team_season" WHERE driver_id = '896d3966-d916-4286-af75-841344095ef4' AND season_id = '7c419276-4041-409b-b4b7-bda5bd540e3b' ORDER BY "driver_team_season"."id" LIMIT 1
-2026/11/19 21:40:54 INFO Creating new DTS for driver. firstname=Lance lastname=Stroll team="Racing Point"
-
-2026/11/19 21:40:54 C:/Users/Michi/Documents/Websites/F1_API_GO/repository/driver_team_season_repository.go:46 record not found
-[11.698ms] [rows:0] SELECT * FROM "f1_api"."driver_team_season" WHERE driver_id = 'e90160ae-5c9d-4166-91a4-0f269124273f' AND season_id = '7c419276-4041-409b-b4b7-bda5bd540e3b' ORDER BY "driver_team_season"."id" LIMIT 1
-2026/11/19 21:40:54 INFO Creating new DTS for driver. firstname=Kevin lastname=Magnussen team="Haas F1 Team"
-
-2026/11/19 21:40:54 C:/Users/Michi/Documents/Websites/F1_API_GO/repository/driver_team_season_repository.go:46 record not found
-[10.596ms] [rows:0] SELECT * FROM "f1_api"."driver_team_season" WHERE driver_id = '0f7d3cea-4077-4dbb-b6d2-fc89864c4676' AND season_id = '7c419276-4041-409b-b4b7-bda5bd540e3b' ORDER BY "driver_team_season"."id" LIMIT 1
-2026/11/19 21:40:54 INFO Creating new DTS for driver. firstname=Antonio lastname=Giovinazzi team="Alfa Romeo"
-
-2026/11/19 21:40:54 C:/Users/Michi/Documents/Websites/F1_API_GO/repository/driver_team_season_repository.go:46 record not found
-[11.011ms] [rows:0] SELECT * FROM "f1_api"."driver_team_season" WHERE driver_id = '12605d9f-9825-436c-adcc-3e40df873f6b' AND season_id = '7c419276-4041-409b-b4b7-bda5bd540e3b' ORDER BY "driver_team_season"."id" LIMIT 1
-2026/11/19 21:40:54 INFO Creating new DTS for driver. firstname=Romain lastname=Grosjean team="Haas F1 Team"
-
-2026/11/19 21:40:54 C:/Users/Michi/Documents/Websites/F1_API_GO/repository/driver_team_season_repository.go:46 record not found
-[11.040ms] [rows:0] SELECT * FROM "f1_api"."driver_team_season" WHERE driver_id = '11704a34-f74d-4464-8c5f-91424492302b' AND season_id = '7c419276-4041-409b-b4b7-bda5bd540e3b' ORDER BY "driver_team_season"."id" LIMIT 1
-2026/11/19 21:40:54 INFO Creating new DTS for driver. firstname=Robert lastname=Kubica team=Williams
-
-2026/11/19 21:40:54 C:/Users/Michi/Documents/Websites/F1_API_GO/repository/driver_team_season_repository.go:46 record not found
-[11.252ms] [rows:0] SELECT * FROM "f1_api"."driver_team_season" WHERE driver_id = '8decfc06-20f8-40a9-9e8d-ad79a72de168' AND season_id = '7c419276-4041-409b-b4b7-bda5bd540e3b' ORDER BY "driver_team_season"."id" LIMIT 1
-2026/11/19 21:40:54 INFO Creating new DTS for driver. firstname=George lastname=Russell team=Williams
-2026/11/19 21:40:54 INFO Finished updating points for season. year=2019 processed=18 failed=2 duration=1.5915676s
-2026/11/19 21:40:54 Failed execution: season 2019: Pierre Gasly: team not found for scraped name: "Scuderia Toro Rosso Honda"
-Daniil Kvyat: team not found for scraped name: "Scuderia Toro Rosso Honda"
-exit status 1
-2026/11/19 21:40:54 Backfill aborted at 4. Scraping Standings... (scraper-standing): exit status 1
-exit status 1
