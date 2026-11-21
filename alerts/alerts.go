@@ -1,17 +1,12 @@
 package alerts
 
 import (
-	"bytes"
 	"context"
-	"encoding/json"
 	"fmt"
-	"io"
-	"net/http"
-	"strings"
 	"time"
-)
 
-const resendEndpoint = "https://api.resend.com/emails"
+	"github.com/resend/resend-go/v4"
+)
 
 type Config struct {
 	APIKey string
@@ -20,21 +15,23 @@ type Config struct {
 }
 
 type Notifier struct {
-	cfg        Config
-	httpClient *http.Client
+	cfg    Config
+	client *resend.Client
 }
 
 func NewNotifier(cfg Config) *Notifier {
+	var client *resend.Client
+	if cfg.APIKey != "" {
+		client = resend.NewClient(cfg.APIKey)
+	}
 	return &Notifier{
-		cfg: cfg,
-		httpClient: &http.Client{
-			Timeout: 10 * time.Second,
-		},
+		cfg:    cfg,
+		client: client,
 	}
 }
 
 func (n *Notifier) NotifyScraperFailure(ctx context.Context, scraperName string, seasonYear string, scrapeErr error) error {
-	if scrapeErr == nil || n.cfg.APIKey == "" || n.cfg.From == "" || len(n.cfg.To) == 0 {
+	if scrapeErr == nil || n.client == nil || n.cfg.From == "" || len(n.cfg.To) == 0 {
 		return nil
 	}
 
@@ -56,43 +53,13 @@ func (n *Notifier) NotifyScraperFailure(ctx context.Context, scraperName string,
 		scrapeErr.Error(),
 	)
 
-	payload := struct {
-		From    string   `json:"from"`
-		To      []string `json:"to"`
-		Subject string   `json:"subject"`
-		Text    string   `json:"text"`
-	}{
+	params := &resend.SendEmailRequest{
 		From:    n.cfg.From,
 		To:      n.cfg.To,
 		Subject: subject,
 		Text:    body,
 	}
 
-	raw, err := json.Marshal(payload)
-	if err != nil {
-		return err
-	}
-
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, resendEndpoint, bytes.NewReader(raw))
-	if err != nil {
-		return err
-	}
-	req.Header.Set("Authorization", "Bearer "+n.cfg.APIKey)
-	req.Header.Set("Content-Type", "application/json")
-
-	resp, err := n.httpClient.Do(req)
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		errBody, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
-		detail := strings.TrimSpace(string(errBody))
-		if detail != "" {
-			return fmt.Errorf("resend API returned status %d: %s", resp.StatusCode, detail)
-		}
-		return fmt.Errorf("resend API returned status %d", resp.StatusCode)
-	}
-	return nil
+	_, err := n.client.Emails.SendWithContext(ctx, params)
+	return err
 }
