@@ -93,6 +93,21 @@ func (r *DriverRepository) FindCareerHistoryByLastNameIgnoreCase(ctx context.Con
 	return drivers, err
 }
 
+func (r *DriverRepository) SearchByNameIgnoreCase(ctx context.Context, query string) ([]models.Driver, error) {
+	pattern := "%" + escapeLike(query) + "%"
+	var drivers []models.Driver
+	err := r.table(ctx).
+		Where(
+			"LOWER(firstname) LIKE LOWER(?) OR LOWER(lastname) LIKE LOWER(?) OR LOWER(TRIM(firstname || ' ' || lastname)) LIKE LOWER(?)",
+			pattern,
+			pattern,
+			pattern,
+		).
+		Order("lastname ASC, firstname ASC").
+		Find(&drivers).Error
+	return drivers, err
+}
+
 func (r *DriverRepository) FindByFirstNameIgnoreCase(ctx context.Context, firstName string) (*models.Driver, error) {
 	return r.findOne(ctx, "LOWER(firstname) = LOWER(?)", firstName)
 }

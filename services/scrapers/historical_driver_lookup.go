@@ -105,6 +105,7 @@ func (c *historicalDriverClient) fetchSeasonDrivers(ctx context.Context, year st
 		}
 
 		nat := strings.TrimSpace(d.Nationality)
+		normCountry := normalizeCountry(nat)
 		out = append(out, &models.Driver{
 			ID:              uuid.New(),
 			Firstname:       first,
@@ -112,8 +113,8 @@ func (c *historicalDriverClient) fetchSeasonDrivers(ctx context.Context, year st
 			DriverCode:      code,
 			PermanentNumber: permNum,
 			Birthday:        bday,
-			Country:         nat,
-			CountryCode:     getCountryCode(nat),
+			Country:         normCountry,
+			CountryCode:     getCountryCode(normCountry),
 			CreatedAt:       now,
 			UpdatedAt:       now,
 		})

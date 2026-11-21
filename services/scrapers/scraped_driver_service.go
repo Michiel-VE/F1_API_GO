@@ -100,11 +100,11 @@ func (s *ScrapedDriverService) ScrapeF1Drivers(ctx context.Context) ([]*models.D
 		}
 
 		infoGroup := driverDoc.Find(driverInfoGroupSelector).First()
-		var country, teamName string
+		var rawCountry, teamName string
 		var permanentNumber int
 
 		if infoGroup.Length() > 0 {
-			country = strings.TrimSpace(infoGroup.Find(driverCountrySelector).First().Text())
+			rawCountry = strings.TrimSpace(infoGroup.Find(driverCountrySelector).First().Text())
 			teamName = strings.TrimSpace(infoGroup.Find(driverTeamSelector).First().Text())
 			numberText := strings.TrimSpace(infoGroup.Find(driverNumberSelector).First().Text())
 
@@ -123,6 +123,7 @@ func (s *ScrapedDriverService) ScrapeF1Drivers(ctx context.Context) ([]*models.D
 			birthday = *parsed
 		}
 
+		country := normalizeCountry(rawCountry)
 		now := time.Now()
 		driver := &models.Driver{
 			Firstname:       firstName,
@@ -163,8 +164,6 @@ func isSameDriverRecord(existing *models.Driver, scraped *models.Driver) bool {
 		strings.EqualFold(strings.TrimSpace(existing.Lastname), strings.TrimSpace(scraped.Lastname)) {
 		return true
 	}
-	// If existing only stored a code or empty name (from an incomplete historical row),
-	// allow matching by driver code when the name doesn't conflict with another full name.
 	if scraped.DriverCode != "" && strings.EqualFold(existing.DriverCode, scraped.DriverCode) {
 		if strings.TrimSpace(existing.Firstname) == "" || strings.TrimSpace(existing.Lastname) == "" {
 			return true
@@ -183,10 +182,13 @@ func applyDriverUpdates(existing *models.Driver, source *models.Driver) bool {
 		}
 	}
 
+	normCountry := normalizeCountry(source.Country)
+	normCode := getCountryCode(normCountry)
+
 	setString(&existing.Firstname, source.Firstname)
 	setString(&existing.Lastname, source.Lastname)
-	setString(&existing.Country, source.Country)
-	setString(&existing.CountryCode, source.CountryCode)
+	setString(&existing.Country, normCountry)
+	setString(&existing.CountryCode, normCode)
 	setString(&existing.DriverCode, source.DriverCode)
 
 	if source.Team != "" && strings.TrimSpace(existing.Team) == "" {
@@ -330,11 +332,4 @@ func (s *ScrapedDriverService) getDriverCode(lastname string) string {
 		return ""
 	}
 	return strings.ToUpper(folded[:3])
-}
-
-func getCountryCode(country string) string {
-	if len(country) >= 3 {
-		return strings.ToUpper(country[:3])
-	}
-	return ""
 }

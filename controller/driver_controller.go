@@ -3,6 +3,7 @@ package controller
 import (
 	"net/http"
 	"strconv"
+	"strings"
 
 	"f1-api-go/services"
 
@@ -108,6 +109,21 @@ func (d *DriverController) GetDriverByPermanentNumber(c *gin.Context) {
 }
 
 func (d *DriverController) GetAllDrivers(c *gin.Context) {
+	query := strings.TrimSpace(c.Query("q"))
+	if query == "" {
+		query = strings.TrimSpace(c.Query("search"))
+	}
+
+	if query != "" {
+		drivers, err := d.driverService.SearchDrivers(c.Request.Context(), query)
+		if err != nil {
+			SendServiceError(c, err)
+			return
+		}
+		SendListResponse(c, drivers)
+		return
+	}
+
 	drivers, err := d.driverService.GetAllDrivers(c.Request.Context())
 	if err != nil {
 		SendServiceError(c, err)

@@ -3,6 +3,7 @@ package services
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
 	"f1-api-go/internal/models"
@@ -100,8 +101,11 @@ func mapDriverToWithSeasonsResponse(d *models.Driver) response.DriverWithSeasons
 		if dts.Season.ID != (uuid.UUID{}) {
 			seasonName = dts.Season.SeasonName
 		}
+
 		teamName := ""
-		if dts.Team.ID != (uuid.UUID{}) {
+		if dts.SeasonTeamName != "" {
+			teamName = dts.SeasonTeamName
+		} else if dts.Team.ID != (uuid.UUID{}) {
 			teamName = dts.Team.Name
 		}
 
@@ -158,6 +162,32 @@ func (s *DriverService) GetDriversByPermanentNumber(ctx context.Context, permNum
 	for i := range drivers {
 		res = append(res, mapDriverToResponse(&drivers[i]))
 	}
+	return res, nil
+}
+
+func (s *DriverService) SearchDrivers(ctx context.Context, query string) ([]response.DriverResponse, error) {
+	needle := strings.TrimSpace(query)
+	if needle == "" {
+		return s.GetAllDrivers(ctx)
+	}
+
+	cacheKey := fmt.Sprintf("drivers::search:%s", strings.ToLower(needle))
+	var cached []response.DriverResponse
+	if cacheGetJSON(ctx, s.redisClient, s.cacheEnabled, cacheKey, &cached) {
+		return cached, nil
+	}
+
+	drivers, err := s.driverRepository.SearchByNameIgnoreCase(ctx, needle)
+	if err != nil {
+		return nil, err
+	}
+
+	res := make([]response.DriverResponse, 0, len(drivers))
+	for i := range drivers {
+		res = append(res, mapDriverToResponse(&drivers[i]))
+	}
+
+	cacheSetJSON(ctx, s.redisClient, s.cacheEnabled, cacheKey, res)
 	return res, nil
 }
 
