@@ -3,6 +3,7 @@ package alerts
 import (
 	"context"
 	"fmt"
+	"log"
 	"time"
 
 	"github.com/resend/resend-go/v4"
@@ -31,7 +32,16 @@ func NewNotifier(cfg Config) *Notifier {
 }
 
 func (n *Notifier) NotifyScraperFailure(ctx context.Context, scraperName string, seasonYear string, scrapeErr error) error {
-	if scrapeErr == nil || n.client == nil || n.cfg.From == "" || len(n.cfg.To) == 0 {
+	if scrapeErr == nil {
+		return nil
+	}
+	if n.client == nil || n.cfg.From == "" || len(n.cfg.To) == 0 {
+		log.Printf(
+			"WARN: Skipping Resend alert (hasAPIKey=%t, hasFrom=%t, toCount=%d)",
+			n.client != nil,
+			n.cfg.From != "",
+			len(n.cfg.To),
+		)
 		return nil
 	}
 
@@ -60,6 +70,12 @@ func (n *Notifier) NotifyScraperFailure(ctx context.Context, scraperName string,
 		Text:    body,
 	}
 
-	_, err := n.client.Emails.SendWithContext(ctx, params)
-	return err
+	resp, err := n.client.Emails.SendWithContext(ctx, params)
+	if err != nil {
+		return err
+	}
+	if resp != nil {
+		log.Printf("Sent Resend failure alert (id=%s)", resp.Id)
+	}
+	return nil
 }
