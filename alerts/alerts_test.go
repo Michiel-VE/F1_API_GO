@@ -7,38 +7,18 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"testing"
-
-	"github.com/resend/resend-go/v4"
 )
-
-type rewriteTransport struct {
-	target *httptest.Server
-	base   http.RoundTripper
-}
-
-// Redirects SDK requests to the local httptest server during tests.
-func (t *rewriteTransport) RoundTrip(req *http.Request) (*http.Response, error) {
-	cloned := req.Clone(req.Context())
-	targetURL := t.target.URL
-	if strings.HasPrefix(targetURL, "http://") {
-		cloned.URL.Scheme = "http"
-		cloned.URL.Host = strings.TrimPrefix(targetURL, "http://")
-	}
-	return t.base.RoundTrip(cloned)
-}
 
 func newTestNotifier(cfg Config, server *httptest.Server) *Notifier {
 	n := NewNotifier(cfg)
-	if cfg.APIKey != "" {
-		httpClient := &http.Client{
-			Transport: &rewriteTransport{
-				target: server,
-				base:   http.DefaultTransport,
-			},
+	if n.client != nil {
+		u, err := url.Parse(server.URL)
+		if err == nil {
+			n.client.BaseURL = u
 		}
-		n.client = resend.NewCustomClient(httpClient, cfg.APIKey)
 	}
 	return n
 }

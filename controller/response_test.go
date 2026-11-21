@@ -136,10 +136,10 @@ func TestValidSeasonAndRequireSeason(t *testing.T) {
 }
 
 func TestSendListResponse(t *testing.T) {
-	cEmpty, wEmpty := newTestContext(http.MethodGet, "/list")
+	cEmpty, _ := newTestContext(http.MethodGet, "/list")
 	SendListResponse(cEmpty, []string{})
-	if wEmpty.Code != http.StatusNoContent {
-		t.Errorf("empty list status = %d, want %d", wEmpty.Code, http.StatusNoContent)
+	if cEmpty.Writer.Status() != http.StatusNoContent {
+		t.Errorf("empty list status = %d, want %d", cEmpty.Writer.Status(), http.StatusNoContent)
 	}
 
 	cItems, wItems := newTestContext(http.MethodGet, "/list")
