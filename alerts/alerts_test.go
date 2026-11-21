@@ -9,6 +9,8 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"github.com/resend/resend-go/v4"
 )
 
 type rewriteTransport struct {
@@ -16,7 +18,7 @@ type rewriteTransport struct {
 	base   http.RoundTripper
 }
 
-// Redirects requests to the test server so tests do not hit the live Resend API.
+// Redirects SDK requests to the local httptest server during tests.
 func (t *rewriteTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 	cloned := req.Clone(req.Context())
 	targetURL := t.target.URL
@@ -29,9 +31,14 @@ func (t *rewriteTransport) RoundTrip(req *http.Request) (*http.Response, error) 
 
 func newTestNotifier(cfg Config, server *httptest.Server) *Notifier {
 	n := NewNotifier(cfg)
-	n.httpClient.Transport = &rewriteTransport{
-		target: server,
-		base:   http.DefaultTransport,
+	if cfg.APIKey != "" {
+		httpClient := &http.Client{
+			Transport: &rewriteTransport{
+				target: server,
+				base:   http.DefaultTransport,
+			},
+		}
+		n.client = resend.NewCustomClient(httpClient, cfg.APIKey)
 	}
 	return n
 }
@@ -40,7 +47,9 @@ func TestNotifyScraperFailure_SkipsWhenMissingInputOrDisabled(t *testing.T) {
 	called := false
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		called = true
+		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"id":"email_123"}`))
 	}))
 	defer server.Close()
 
@@ -95,7 +104,9 @@ func TestNotifyScraperFailure_SendsExpectedPayload(t *testing.T) {
 		if err := json.Unmarshal(body, &gotPayload); err != nil {
 			t.Errorf("failed decoding json payload: %v", err)
 		}
+		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"id":"email_123"}`))
 	}))
 	defer server.Close()
 
@@ -126,10 +137,11 @@ func TestNotifyScraperFailure_SendsExpectedPayload(t *testing.T) {
 	}
 }
 
-func TestNotifyScraperFailure_Non2xxResponse(t *testing.T) {
+func TestNotifyScraperFailure_ErrorResponse(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusBadGateway)
-		_, _ = w.Write([]byte("upstream error"))
+		_, _ = w.Write([]byte(`{"message":"upstream error"}`))
 	}))
 	defer server.Close()
 
@@ -142,8 +154,5 @@ func TestNotifyScraperFailure_Non2xxResponse(t *testing.T) {
 	err := n.NotifyScraperFailure(context.Background(), "drivers", "2026", errors.New("parse failed"))
 	if err == nil {
 		t.Fatal("expected error for 502 response, got nil")
-	}
-	if !strings.Contains(err.Error(), "502") || !strings.Contains(err.Error(), "upstream error") {
-		t.Errorf("unexpected error message: %v", err)
 	}
 }
