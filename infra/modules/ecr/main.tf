@@ -25,12 +25,11 @@ resource "aws_ecr_lifecycle_policy" "f1_api_cleanup" {
       },
       {
         rulePriority = 2
-        description  = "Keep last 3 tagged images"
+        description  = "Keep last 3 images"
         selection = {
-          tagStatus      = "tagged"
-          tagPatternList = ["v*"]
-          countType      = "imageCountMoreThan"
-          countNumber    = 3
+          tagStatus   = "any"
+          countType   = "imageCountMoreThan"
+          countNumber = 3
         }
         action = { type = "expire" }
       }
