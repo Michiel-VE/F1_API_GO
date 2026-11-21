@@ -8,8 +8,10 @@ import (
 	"net/http"
 	"os"
 	"strconv"
+	"strings"
 	"time"
 
+	"f1-api-go/alerts"
 	"f1-api-go/config"
 	"f1-api-go/controller"
 	"f1-api-go/internal/models"
@@ -406,6 +408,22 @@ func openRedis() (*redis.Client, error) {
 	return redis.NewClient(opt), nil
 }
 
+func newAlertNotifier() *alerts.Notifier {
+	var recipients []string
+	for _, part := range strings.Split(config.AppCfg.AlertEmailTo, ",") {
+		trimmed := strings.TrimSpace(part)
+		if trimmed != "" {
+			recipients = append(recipients, trimmed)
+		}
+	}
+
+	return alerts.NewNotifier(alerts.Config{
+		APIKey: strings.TrimSpace(config.AppCfg.ResendAPIKey),
+		From:   strings.TrimSpace(config.AppCfg.AlertEmailFrom),
+		To:     recipients,
+	})
+}
+
 func main() {
 	config.InitConfig()
 
@@ -423,10 +441,12 @@ func main() {
 			redisClient = nil
 		}
 
+		notifier := newAlertNotifier()
+
 		if os.Getenv("AWS_EXECUTION_ENV") != "" {
 			http.HandleFunc("/events", func(w http.ResponseWriter, r *http.Request) {
 				log.Printf("Executing scraper task for RUN_MODE: %s", runMode)
-				if err := runScraper(r.Context(), db, redisClient, runMode); err != nil {
+				if err := runScraper(r.Context(), db, redisClient, notifier, runMode); err != nil {
 					log.Printf("Scraper failed: %v", err)
 					http.Error(w, err.Error(), http.StatusInternalServerError)
 					return
@@ -446,7 +466,7 @@ func main() {
 			return
 		}
 
-		if err := runScraper(context.Background(), db, redisClient, runMode); err != nil {
+		if err := runScraper(context.Background(), db, redisClient, notifier, runMode); err != nil {
 			log.Fatalf("Failed execution: %v", err)
 		}
 		return
@@ -531,8 +551,16 @@ var cachesToEvict = map[string][]string{
 	"scraper-race-result": {"results", "results_hist"},
 }
 
-func runScraper(ctx context.Context, db *gorm.DB, redisClient *redis.Client, runMode string) error {
+func runScraper(ctx context.Context, db *gorm.DB, redisClient *redis.Client, notifier *alerts.Notifier, runMode string) error {
 	runErr := executeRunMode(ctx, db, runMode)
+
+	if runErr != nil && notifier != nil {
+		alertCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if notifyErr := notifier.NotifyScraperFailure(alertCtx, runMode, os.Getenv("RUN_YEAR"), runErr); notifyErr != nil {
+			log.Printf("WARN: Failed to send scraper failure alert: %v", notifyErr)
+		}
+	}
 
 	if redisClient != nil {
 		if names := cachesToEvict[runMode]; len(names) > 0 {

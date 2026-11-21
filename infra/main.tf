@@ -37,6 +37,9 @@ module "secrets" {
   jwt_secret_key       = var.jwt_secret_key
   upstash_redis_token  = var.upstash_redis_token
   upstash_redis_url    = var.upstash_redis_url
+  resend_api_key       = var.resend_api_key
+  alert_email_from     = var.alert_email_from
+  alert_email_to       = var.alert_email_to
 }
 module "lambdas" {
   source          = "./modules/lambdas"
@@ -56,7 +59,7 @@ terraform {
     bucket         = "f1-api-tfstate"
     key            = "f1-api/terraform.tfstate"
     region         = "eu-north-1"
-    dynamodb_table = "f1-api-tf-lock"
+    use_lockfile = true
     encrypt        = true
   }
 }

@@ -49,3 +49,19 @@ variable "upstash_redis_url" {
   description = "Upstash Redis REST URL"
   type        = string
 }
+
+variable "resend_api_key" {
+  description = "Resend API key for sending scraper failure alerts"
+  type        = string
+  sensitive   = true
+}
+
+variable "alert_email_from" {
+  description = "Verified sender email address for scraper alerts"
+  type        = string
+}
+
+variable "alert_email_to" {
+  description = "Recipient email address(es) for scraper alerts (comma-separated)"
+  type        = string
+}

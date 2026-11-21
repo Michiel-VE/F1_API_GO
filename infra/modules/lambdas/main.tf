@@ -51,6 +51,10 @@ resource "aws_lambda_function" "f1_lambda" {
     }
   }
 
+  lifecycle {
+    ignore_changes = [image_uri]
+  }
+
   depends_on = [aws_cloudwatch_log_group.f1_lambda_logs]
 }
 
@@ -104,6 +108,10 @@ resource "aws_lambda_function" "race_scheduler" {
     }
   }
 
+  lifecycle {
+    ignore_changes = [image_uri]
+  }
+
   depends_on = [aws_cloudwatch_log_group.race_updater_logs]
 }
 
@@ -144,6 +152,10 @@ resource "aws_lambda_function" "driver_team_update" {
       RUN_MODE                  = "scraper-driver-team"
       AWS_LWA_PASS_THROUGH_PATH = "/events"
     }
+  }
+
+  lifecycle {
+    ignore_changes = [image_uri]
   }
 
   depends_on = [aws_cloudwatch_log_group.driver_team_logs]
@@ -188,6 +200,10 @@ resource "aws_lambda_function" "standing_scheduler" {
     }
   }
 
+  lifecycle {
+    ignore_changes = [image_uri]
+  }
+
   depends_on = [aws_cloudwatch_log_group.standing_logs]
 }
 
@@ -228,6 +244,10 @@ resource "aws_lambda_function" "race_result_scheduler" {
       RUN_MODE                  = "scraper-race-result"
       AWS_LWA_PASS_THROUGH_PATH = "/events"
     }
+  }
+
+  lifecycle {
+    ignore_changes = [image_uri]
   }
 
   depends_on = [aws_cloudwatch_log_group.race_result_logs]

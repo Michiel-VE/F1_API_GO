@@ -27,6 +27,9 @@ type AppConfig struct {
 	GoogleClientSecret string
 	JWTSecretKey       string
 	RedisURL           string
+	ResendAPIKey       string
+	AlertEmailFrom     string
+	AlertEmailTo       string
 
 	ServerPort          string
 	GoogleOAuth         *oauth2.Config
@@ -158,6 +161,9 @@ func loadLocalEnv() {
 		GoogleClientSecret: clientSecret,
 		JWTSecretKey:       os.Getenv("JWT_SECRET_KEY"),
 		RedisURL:           redisURL,
+		ResendAPIKey:       os.Getenv("RESEND_API_KEY"),
+		AlertEmailFrom:     os.Getenv("ALERT_EMAIL_FROM"),
+		AlertEmailTo:       os.Getenv("ALERT_EMAIL_TO"),
 
 		ServerPort:          getEnv("PORT", "8080"),
 		GoogleOAuth:         buildGoogleOAuth(clientID, clientSecret),
@@ -233,6 +239,9 @@ func loadSecretsManager() {
 		GoogleClientSecret: clientSecret,
 		JWTSecretKey:       secrets["jwt_secret_key"],
 		RedisURL:           upstashRedisURL(secrets["upstash_redis_url"], secrets["upstash_redis_token"]),
+		ResendAPIKey:       secrets["resend_api_key"],
+		AlertEmailFrom:     secrets["alert_email_from"],
+		AlertEmailTo:       secrets["alert_email_to"],
 
 		ServerPort:          getEnv("PORT", "8080"),
 		GoogleOAuth:         buildGoogleOAuth(clientID, clientSecret),

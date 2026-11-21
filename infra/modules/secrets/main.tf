@@ -1,6 +1,6 @@
 resource "aws_secretsmanager_secret" "app_secrets" {
   name        = var.secret_name
-  description = "Application secrets for DB, Google OAuth, and Upstash Redis"
+  description = "Application secrets for DB, Google OAuth, Upstash Redis, and alerts"
 }
 
 resource "aws_secretsmanager_secret_version" "app_secrets_value" {
@@ -19,5 +19,10 @@ resource "aws_secretsmanager_secret_version" "app_secrets_value" {
     # Upstash Redis
     upstash_redis_token  = var.upstash_redis_token
     upstash_redis_url    = var.upstash_redis_url
+
+    # Resend Alerts
+    resend_api_key       = var.resend_api_key
+    alert_email_from     = var.alert_email_from
+    alert_email_to       = var.alert_email_to
   })
 }

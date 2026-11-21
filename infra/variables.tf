@@ -54,6 +54,23 @@ variable "upstash_redis_url" {
   type        = string
 }
 
+# Resend & Alerting Configuration
+variable "resend_api_key" {
+  description = "Resend API key for sending scraper failure alerts"
+  type        = string
+  sensitive   = true
+}
+
+variable "alert_email_from" {
+  description = "Verified sender email address on f1.michielve.be"
+  type        = string
+}
+
+variable "alert_email_to" {
+  description = "Recipient email address for scraper failure alerts"
+  type        = string
+}
+
 # AWS & Environment Settings
 variable "aws_region" {
   description = "AWS region to deploy resources in"
