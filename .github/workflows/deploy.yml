@@ -104,6 +104,9 @@ jobs:
           TF_VAR_jwt_secret_key:       ${{ secrets.JWT_SECRET_KEY }}
           TF_VAR_upstash_redis_token:  ${{ secrets.UPSTASH_REDIS_TOKEN }}
           TF_VAR_upstash_redis_url:    ${{ secrets.UPSTASH_REDIS_URL }}
+          TF_VAR_resend_api_key:       ${{ secrets.RESEND_API_KEY }}
+          TF_VAR_alert_email_from:     ${{ secrets.ALERT_EMAIL_FROM }}
+          TF_VAR_alert_email_to:       ${{ secrets.ALERT_EMAIL_TO }}
           TF_VAR_github_org:           Michiel-VE
           TF_VAR_github_repo:          F1_API_GO
           TF_VAR_github_org_id:        "57892007"
